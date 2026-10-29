@@ -421,6 +421,33 @@ describe("MEDwayReservation", async function () {
         "Unauthorized"
       );
     });
+
+    it("Should revert with InvalidStatus if fulfilling an already fulfilled reservation", async function () {
+      const { medway } = await deployFixture();
+      const { reservationId } = await createSampleReservation(medway);
+
+      await medway.write.acceptReservation([reservationId], { account: provider.account });
+      await medway.write.fulfillReservation([reservationId], { account: provider.account });
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.fulfillReservation([reservationId], { account: provider.account }),
+        medway,
+        "InvalidStatus"
+      );
+    });
+
+    it("Should revert with InvalidStatus if fulfilling a cancelled reservation", async function () {
+      const { medway } = await deployFixture();
+      const { reservationId } = await createSampleReservation(medway);
+
+      await medway.write.cancelReservation([reservationId], { account: requester.account });
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.fulfillReservation([reservationId], { account: provider.account }),
+        medway,
+        "InvalidStatus"
+      );
+    });
   });
 
   // =========================================================================
@@ -706,6 +733,115 @@ describe("MEDwayReservation", async function () {
         medway,
         "InvalidEvidence"
       );
+    });
+  });
+
+  // =========================================================================
+  // Milestone: Contract Security Checks (Pre-Deployment Validation)
+  // =========================================================================
+  describe("Milestone: Contract Security Checks", function () {
+    it("1. Unauthorized acceptance: an outsider cannot accept a reservation on behalf of the provider", async function () {
+      const { medway } = await deployFixture();
+      const { reservationId } = await createSampleReservation(medway);
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.acceptReservation([reservationId], { account: thirdParty.account }),
+        medway,
+        "Unauthorized"
+      );
+
+      const res = await medway.read.reservations([reservationId]);
+      assert.equal(res[5], Status.Proposed);
+    });
+
+    it("2. Unauthorized cancellation: an unrelated account cannot cancel a reservation", async function () {
+      const { medway } = await deployFixture();
+      const { reservationId } = await createSampleReservation(medway);
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.cancelReservation([reservationId], { account: thirdParty.account }),
+        medway,
+        "Unauthorized"
+      );
+
+      const res = await medway.read.reservations([reservationId]);
+      assert.equal(res[5], Status.Proposed);
+    });
+
+    it("3. Expiry enforcement: an expired reservation cannot be accepted", async function () {
+      const { medway } = await deployFixture();
+      const { reservationId } = await createSampleReservation(medway, 100n);
+
+      await networkHelpers.time.increase(150n);
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.acceptReservation([reservationId], { account: provider.account }),
+        medway,
+        "InvalidExpiry"
+      );
+    });
+
+    it("4. Invalid state transitions: a fulfilled or cancelled reservation cannot be fulfilled again", async function () {
+      const { medway } = await deployFixture();
+
+      // 4a: A fulfilled reservation cannot be fulfilled again
+      const { reservationId: fulfilledId } = await createSampleReservation(medway);
+      await medway.write.acceptReservation([fulfilledId], { account: provider.account });
+      await medway.write.fulfillReservation([fulfilledId], { account: provider.account });
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.fulfillReservation([fulfilledId], { account: provider.account }),
+        medway,
+        "InvalidStatus"
+      );
+
+      // 4b: A cancelled reservation cannot be fulfilled
+      const { reservationId: cancelledId } = await createSampleReservation(medway);
+      await medway.write.cancelReservation([cancelledId], { account: requester.account });
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.fulfillReservation([cancelledId], { account: provider.account }),
+        medway,
+        "InvalidStatus"
+      );
+    });
+
+    it("5. Dispute behavior: only permitted participants can raise a dispute, and invalid evidence is rejected", async function () {
+      const { medway } = await deployFixture();
+      const { reservationId } = await createSampleReservation(medway);
+      await medway.write.acceptReservation([reservationId], { account: provider.account });
+
+      // Outsider attempt rejected
+      await viem.assertions.revertWithCustomError(
+        medway.write.disputeReservation([reservationId, sampleEvidenceHash], {
+          account: thirdParty.account,
+        }),
+        medway,
+        "Unauthorized"
+      );
+
+      // Zero evidence hash rejected
+      await viem.assertions.revertWithCustomError(
+        medway.write.disputeReservation([reservationId, zeroBytes32], {
+          account: requester.account,
+        }),
+        medway,
+        "InvalidEvidence"
+      );
+
+      // Legitimate participant with valid evidence accepted
+      await viem.assertions.emit(
+        medway.write.disputeReservation([reservationId, sampleEvidenceHash], {
+          account: requester.account,
+        }),
+        medway,
+        "ReservationDisputed"
+      );
+
+      const res = await medway.read.reservations([reservationId]);
+      assert.equal(res[5], Status.Disputed);
+      assert.equal(res[8], sampleEvidenceHash);
+      assert.equal(res[9].toLowerCase(), requester.account.address.toLowerCase());
     });
   });
 });
