@@ -227,3 +227,4 @@ def test_json_roundtrip_serialization():
     assert restored.negotiation_id == prop.negotiation_id
     assert restored.status == NegotiationStatus.ACCEPTED
     assert restored.proposed_cost.amount == 200.0
+

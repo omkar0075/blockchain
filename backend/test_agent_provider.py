@@ -229,3 +229,4 @@ def test_inventory_isolation_between_providers():
         assert "diagnostic_slot" not in provider_d.inventory
 
     asyncio.run(run())
+

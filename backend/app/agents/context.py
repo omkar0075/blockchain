@@ -153,3 +153,4 @@ class AgentContext(BaseModel):
         self.approved_by = stripped_approver
         self.approved_at = effective_time
         self.approval_required = False
+

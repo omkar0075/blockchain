@@ -152,3 +152,4 @@ def list_agents() -> list[str]:
 def clear_registry() -> None:
     """Helper to clear the global default registry."""
     default_registry.clear()
+

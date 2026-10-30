@@ -166,3 +166,4 @@ class BaseAgent(abc.ABC):
         Must return a dict containing the output payload.
         """
         raise NotImplementedError("Subclasses must implement process()")
+

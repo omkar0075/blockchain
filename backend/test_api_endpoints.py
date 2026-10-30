@@ -17,7 +17,7 @@ def test_api():
     data = res.json()
     assert data["status"] == "ok"
     assert "contract_address" in data["blockchain"]
-    print("  [+] GET /health -> 200 OK (Contract:", data["blockchain"]["contract_address"] + ")")
+    print(f"  [+] GET /health -> 200 OK (Contract: {data['blockchain']['contract_address']})")
 
     # 2. Institutions
     res = client.get("/institutions")

@@ -156,3 +156,4 @@ def test_module_level_default_registry_helpers():
         assert "GlobalAgent" in list_agents()
     finally:
         clear_registry()
+

@@ -3,6 +3,7 @@ from .base import BaseAgent
 from .context import AgentContext
 from .discovery_agent import DiscoveryAgent
 from .message_bus import MessageBus, default_bus
+from .negotiation_agent import NegotiationAgent
 from .provider_agent import ProviderAgent
 from .registry import (
     AgentRegistry,
@@ -125,6 +126,7 @@ __all__ = [
     "get_agent",
     "list_agents",
     "MessageBus",
+    "NegotiationAgent",
     "ProviderAgent",
     "register_agent",
     "RequestAgent",

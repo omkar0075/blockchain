@@ -192,3 +192,4 @@ class VerificationResult(BaseModel):
             if self.checks.is_all_passed() and not self.failed_checks:
                 raise ValueError("status cannot be REJECTED when all checks passed and no failed_checks are recorded")
         return self
+

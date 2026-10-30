@@ -207,3 +207,4 @@ def test_json_roundtrip_serialization():
     assert restored.approved_by == "Dr. Director"
     assert restored.approval_required is False
     assert restored.created_at.tzinfo == timezone.utc
+

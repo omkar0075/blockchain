@@ -164,3 +164,4 @@ class ProviderOffer(BaseModel):
         if self.expires_at < self.created_at:
             raise ValueError("expires_at cannot be in the past relative to created_at")
         return self
+

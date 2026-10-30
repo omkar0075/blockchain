@@ -173,3 +173,4 @@ class NegotiationProposal(BaseModel):
             # A counteroffer should ideally reference what is being countered
             pass
         return self
+
