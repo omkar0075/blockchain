@@ -142,6 +142,7 @@ class ReservationWorkflowCoordinator:
         blockchain_reader: Optional[Any] = None,
         max_recovery_attempts: int = 3,
         workflow_service: Optional[Any] = None,
+        observability_service: Optional[Any] = None,
     ) -> None:
         self.registry = registry or create_full_coordination_registry(
             blockchain_client=blockchain_client,
@@ -149,6 +150,7 @@ class ReservationWorkflowCoordinator:
         )
         self.max_recovery_attempts = max_recovery_attempts
         self.workflow_service = workflow_service
+        self.observability_service = observability_service
         self._workflows: dict[UUID, ReservationWorkflowResult] = {}
         self._active_runs: set[UUID] = set()
 
@@ -647,3 +649,14 @@ class ReservationWorkflowCoordinator:
                 self.workflow_service.persist_workflow(result)
             except Exception as e:
                 logger.error("Auto-persist error in workflow coordinator: %s", e)
+        if self.observability_service is not None:
+            try:
+                self.observability_service.record_event(
+                    workflow_id=result.workflow_id,
+                    agent_id=agent_name,
+                    event_type=new_state,
+                    status="FAILED" if "FAIL" in new_state else "SUCCESS",
+                    payload={"details": details, "from_state": step["from_state"]},
+                )
+            except Exception as e:
+                logger.error("Auto-observability error in workflow coordinator: %s", e)

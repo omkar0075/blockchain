@@ -178,6 +178,29 @@ def init_db() -> None:
             "CREATE INDEX IF NOT EXISTS idx_workflows_state ON workflows(state)"
         )
 
+        # 7. Dedicated Agent Observability Events Table
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS observability_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id TEXT NOT NULL,
+                workflow_id TEXT NOT NULL,
+                agent_id TEXT NOT NULL,
+                event_type TEXT NOT NULL,
+                status TEXT NOT NULL,
+                duration_ms REAL,
+                payload_json TEXT NOT NULL,
+                timestamp REAL NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_observability_wf ON observability_events(workflow_id, timestamp)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_observability_agent ON observability_events(agent_id, timestamp)"
+        )
+
         conn.commit()
 
 
@@ -637,4 +660,96 @@ def delete_workflow_record(workflow_id: str) -> None:
         conn.execute("DELETE FROM workflow_transitions WHERE workflow_id = ?", (str(workflow_id),))
         conn.execute("DELETE FROM workflows WHERE workflow_id = ?", (str(workflow_id),))
         conn.commit()
+
+
+# =============================================================================
+# Dedicated Agent Observability Events Storage
+# =============================================================================
+
+def save_observability_event(event: dict[str, Any]) -> None:
+    """Persist a structured agent observability event."""
+    ts = event.get("timestamp")
+    if ts is None:
+        ts = time.time()
+    elif isinstance(ts, (int, float)):
+        ts = float(ts)
+    elif isinstance(ts, str):
+        try:
+            from datetime import datetime
+            ts = datetime.fromisoformat(ts).timestamp()
+        except Exception:
+            ts = time.time()
+
+    payload_json = event.get("payload_json")
+    if payload_json is None:
+        payload_data = event.get("payload", {})
+        payload_json = json.dumps(payload_data) if isinstance(payload_data, (dict, list)) else str(payload_data)
+
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO observability_events (
+                event_id, workflow_id, agent_id, event_type, status,
+                duration_ms, payload_json, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(event.get("event_id", "")),
+                str(event.get("workflow_id", "")),
+                str(event.get("agent_id", "")),
+                str(event.get("event_type", "EVENT")),
+                str(event.get("status", "SUCCESS")),
+                event.get("duration_ms"),
+                payload_json,
+                ts,
+            ),
+        )
+        conn.commit()
+
+
+def get_observability_events(
+    workflow_id: Optional[str] = None,
+    agent_id: Optional[str] = None,
+    event_type: Optional[str] = None,
+    limit: int = 1000,
+) -> list[dict[str, Any]]:
+    """Retrieve structured observability events matching filter criteria."""
+    query = "SELECT * FROM observability_events WHERE 1=1"
+    params: list[Any] = []
+
+    if workflow_id:
+        query += " AND workflow_id = ?"
+        params.append(str(workflow_id))
+    if agent_id:
+        query += " AND agent_id = ?"
+        params.append(str(agent_id))
+    if event_type:
+        query += " AND event_type = ?"
+        params.append(str(event_type))
+
+    query += " ORDER BY timestamp ASC, id ASC LIMIT ?"
+    params.append(limit)
+
+    with get_connection() as conn:
+        rows = conn.execute(query, params).fetchall()
+        result = []
+        for r in rows:
+            d = dict(r)
+            try:
+                d["payload"] = json.loads(d["payload_json"])
+            except Exception:
+                d["payload"] = d["payload_json"]
+            result.append(d)
+        return result
+
+
+def delete_observability_events(workflow_id: Optional[str] = None) -> None:
+    """Clear observability events for cleanup."""
+    with get_connection() as conn:
+        if workflow_id:
+            conn.execute("DELETE FROM observability_events WHERE workflow_id = ?", (str(workflow_id),))
+        else:
+            conn.execute("DELETE FROM observability_events")
+        conn.commit()
+
 
