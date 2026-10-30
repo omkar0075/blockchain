@@ -28,12 +28,36 @@ interface Institution {
   resources: Record<string, number>
 }
 
+interface ProviderCapacity {
+  provider: string
+  resourceType: string
+  totalCapacity: number
+  lockedCapacity: number
+  committedCapacity: number
+  availableCapacity: number
+  isActive: boolean
+}
+
+interface CapacityLockDetail {
+  lockId: string
+  resourceType: string
+  provider: string
+  requester: string
+  quantity: number
+  createdAt: string
+  expiresAt: string
+  status: string
+  statusCode: number
+  reservationId: string
+}
+
 interface Offer {
   provider_id: string
   provider_name: string
   available_quantity: number
   estimated_delivery_hours: number
   rationale: string
+  onchain_verified?: boolean
 }
 
 interface Proposal {
@@ -43,6 +67,10 @@ interface Proposal {
   selected_provider_id: string | null
   selected_quantity: number
   status: string
+  lock_id?: string
+  lock_status?: string
+  lock_expires_at?: string
+  lock_tx_hash?: string
 }
 
 interface Commitment {
@@ -67,6 +95,8 @@ interface Commitment {
   resolution_notes?: string
   note?: string
   message?: string
+  terms_hash?: string
+  lock_id?: string
 }
 
 interface AuditEvent {
@@ -145,11 +175,93 @@ export default function App() {
   const [evidenceRecords, setEvidenceRecords] = useState<EvidenceRecord[]>([])
   const [directRpcResult, setDirectRpcResult] = useState<DirectRpcVerification | null>(null)
 
+  // Feature 3: Capacity Breakdown & Quota State
+  const [capacities, setCapacities] = useState<Record<string, ProviderCapacity>>({})
+  const [quotaInput, setQuotaInput] = useState(12)
+  const [updatingQuota, setUpdatingQuota] = useState(false)
+  const [lockModalTarget, setLockModalTarget] = useState<CapacityLockDetail | null>(null)
+
   // Headers for current actor
   const authHeaders = {
     'Content-Type': 'application/json',
     'X-Actor-Id': currentActor.id,
     'X-Api-Key': currentActor.key,
+  }
+
+  async function loadCapacities() {
+    try {
+      const res = await fetch(`${API}/capacity/lab-c/diagnostic_slot`)
+      if (res.ok) {
+        const data = await res.json()
+        setCapacities(prev => ({ ...prev, 'lab-c': data }))
+      }
+    } catch {
+      // quiet fallback
+    }
+  }
+
+  async function updateOnchainQuota() {
+    if (quotaInput <= 0) return
+    setUpdatingQuota(true)
+    setMessage(`Updating Lab C on-chain capacity quota to ${quotaInput} slots on Coral Testnet...`)
+    try {
+      const res = await fetch(`${API}/inventory`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          provider_id: 'lab-c',
+          resource_type: 'diagnostic_slot',
+          total_capacity: quotaInput,
+          is_active: true,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Failed to update quota')
+      setMessage(`On-chain capacity quota updated to ${quotaInput} slots (Tx: ${data.txHash ? data.txHash.slice(0, 10) + '...' : 'Confirmed'})`)
+      await loadCapacities()
+      await loadData()
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : 'Error updating quota')
+    } finally {
+      setUpdatingQuota(false)
+    }
+  }
+
+  async function inspectLock(lockId: string) {
+    setLoading(true)
+    try {
+      const res = await fetch(`${API}/locks/${lockId}`)
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Failed to inspect lock')
+      setLockModalTarget(data.lock)
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : 'Error inspecting lock')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  async function releaseActiveLock(lockId: string) {
+    if (!window.confirm('Release this temporary capacity lock hold back to provider inventory?')) return
+    setLoading(true)
+    setMessage('Releasing temporary capacity lock on Coral Testnet...')
+    try {
+      const res = await fetch(`${API}/locks/${lockId}/release`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({ reason: 'Released via coordinator dashboard' }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Failed to release lock')
+      setMessage(`Capacity lock released back to provider inventory!`)
+      setProposal(null)
+      await loadCapacities()
+      await loadData()
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : 'Error releasing lock')
+    } finally {
+      setLoading(false)
+    }
   }
 
   async function loadData() {
@@ -162,6 +274,7 @@ export default function App() {
       setHealth(hRes.blockchain)
       setInstitutions(iRes)
       setCommitments(cRes)
+      await loadCapacities()
     } catch {
       setMessage('Backend not reachable at http://127.0.0.1:8000. Ensure FastAPI server is running.')
     }
@@ -485,27 +598,116 @@ export default function App() {
 
       {/* TWO COLUMN GRID */}
       <section className="grid">
-        {/* PANEL 1: INSTITUTION NETWORK */}
+        {/* PANEL 1: INSTITUTION NETWORK & ON-CHAIN CAPACITY */}
         <article className="panel">
           <div className="section-title">
             <span className="step-num">01</span>
             <div>
-              <h2>Participating Institution Network</h2>
-              <p>Simulated accredited healthcare providers with live capacities</p>
+              <h2>Participating Institutions & On-Chain Quota</h2>
+              <p>Real-time capacity allocations strictly enforced on Coral Testnet</p>
             </div>
           </div>
           <div className="institution-list">
-            {institutions.map(inst => (
-              <div className="institution" key={inst.id}>
-                <div>
-                  <strong>{inst.name}</strong>
-                  <small>
-                    {inst.type.replace('_', ' ')} · ID: {inst.id}
-                  </small>
+            {institutions.map(inst => {
+              const cap = capacities[inst.id]
+              const isProvider = inst.type === 'diagnostic_lab' || inst.id === 'lab-c'
+
+              return (
+                <div
+                  className="institution"
+                  key={inst.id}
+                  style={{ flexDirection: 'column', alignItems: 'stretch', gap: '8px' }}
+                >
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <div>
+                      <strong>{inst.name}</strong>
+                      <small>
+                        {inst.type.replace('_', ' ')} · ID: {inst.id}
+                      </small>
+                    </div>
+                    {isProvider && cap ? (
+                      <div style={{ display: 'flex', gap: '5px', flexWrap: 'wrap' }}>
+                        <span className="slots-pill" style={{ background: '#dcfce7', color: '#15803d', borderColor: '#86efac' }}>
+                          {cap.availableCapacity} avail
+                        </span>
+                        <span className="slots-pill" style={{ background: '#fef3c7', color: '#b45309', borderColor: '#fde68a' }}>
+                          {cap.lockedCapacity} locked
+                        </span>
+                        <span className="slots-pill" style={{ background: '#e0e7ff', color: '#4338ca', borderColor: '#c7d2fe' }}>
+                          {cap.committedCapacity} committed
+                        </span>
+                      </div>
+                    ) : (
+                      <span className="slots-pill">{inst.resources?.diagnostic_slot ?? 0} slots</span>
+                    )}
+                  </div>
+
+                  {/* Multi-segment Real-Time Capacity Bar for Diagnostic Providers */}
+                  {isProvider && cap && cap.totalCapacity > 0 && (
+                    <div style={{ marginTop: '2px' }}>
+                      <div
+                        className="capacity-bar-container"
+                        title={`Total: ${cap.totalCapacity} | Available: ${cap.availableCapacity} | Locked: ${cap.lockedCapacity} | Committed: ${cap.committedCapacity}`}
+                      >
+                        <div
+                          className="capacity-bar-segment segment-available"
+                          style={{ width: `${(cap.availableCapacity / cap.totalCapacity) * 100}%` }}
+                        />
+                        <div
+                          className="capacity-bar-segment segment-locked"
+                          style={{ width: `${(cap.lockedCapacity / cap.totalCapacity) * 100}%` }}
+                        />
+                        <div
+                          className="capacity-bar-segment segment-committed"
+                          style={{ width: `${(cap.committedCapacity / cap.totalCapacity) * 100}%` }}
+                        />
+                      </div>
+                      <div className="capacity-legend">
+                        <span className="capacity-legend-item">
+                          <span className="legend-dot dot-available"></span> Available ({cap.availableCapacity})
+                        </span>
+                        <span className="capacity-legend-item">
+                          <span className="legend-dot dot-locked"></span> 2PC Lock ({cap.lockedCapacity})
+                        </span>
+                        <span className="capacity-legend-item">
+                          <span className="legend-dot dot-committed"></span> Committed ({cap.committedCapacity})
+                        </span>
+                        <span style={{ marginLeft: 'auto', fontSize: '10px', color: '#64748b' }}>
+                          Total Quota: {cap.totalCapacity} slots
+                        </span>
+                      </div>
+                    </div>
+                  )}
+
+                  {/* On-Chain Quota Configuration (For Lab C or Arbitrator) */}
+                  {isProvider && (currentActor.id === 'lab-c' || currentActor.role === 'arbitrator') && (
+                    <div className="quota-widget">
+                      <span style={{ fontSize: '11px', fontWeight: 600, color: '#334155' }}>
+                        ⚙️ Update On-Chain Capacity Quota:
+                      </span>
+                      <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
+                        <input
+                          type="number"
+                          min="1"
+                          max="100"
+                          value={quotaInput}
+                          onChange={e => setQuotaInput(Number(e.target.value))}
+                          style={{ width: '70px', padding: '4px 8px', fontSize: '12px' }}
+                        />
+                        <button
+                          className="small"
+                          onClick={updateOnchainQuota}
+                          disabled={updatingQuota}
+                          style={{ padding: '4px 10px', fontSize: '11px' }}
+                        >
+                          {updatingQuota ? 'Broadcasting...' : 'Set Quota on Coral'}
+                        </button>
+                      </div>
+                    </div>
+                  )}
                 </div>
-                <span className="slots-pill">{inst.resources?.diagnostic_slot ?? 0} slots</span>
-              </div>
-            ))}
+              )
+            })}
           </div>
         </article>
 
@@ -573,6 +775,54 @@ export default function App() {
               </span>
             </div>
 
+            {/* Two-Phase Commit Phase 1 Lock Banner */}
+            {proposal.lock_id && (
+              <div className="lock-banner">
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', flexWrap: 'wrap', gap: '8px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className="lock-pulse"></span>
+                    <strong style={{ fontSize: '12px', color: '#065f46' }}>
+                      2PC PHASE 1 ACTIVE: On-Chain Capacity Lock Held
+                    </strong>
+                    <span className="lock-badge">EIP-712 Meta-Tx</span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '6px' }}>
+                    <button
+                      className="small"
+                      onClick={() => inspectLock(proposal.lock_id!)}
+                      style={{ padding: '3px 8px', fontSize: '11px', background: '#0284c7', borderColor: '#0284c7' }}
+                    >
+                      🔍 Inspect Lock
+                    </button>
+                    {proposal.status === 'proposed' && (
+                      <button
+                        className="small danger"
+                        onClick={() => releaseActiveLock(proposal.lock_id!)}
+                        disabled={loading}
+                        style={{ padding: '3px 8px', fontSize: '11px' }}
+                      >
+                        Release Hold
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div style={{ display: 'flex', gap: '14px', marginTop: '6px', fontSize: '11px', color: '#047857', flexWrap: 'wrap' }}>
+                  <span>
+                    Lock ID: <code className="mono-hash">{proposal.lock_id.slice(0, 10)}...{proposal.lock_id.slice(-6)}</code>
+                  </span>
+                  {proposal.lock_tx_hash && (
+                    <span>
+                      Tx: <code className="mono-hash">{proposal.lock_tx_hash.slice(0, 10)}...</code>
+                    </span>
+                  )}
+                  <span>Status: <strong>Active (Slots Held on Coral)</strong></span>
+                  {proposal.lock_expires_at && (
+                    <span>Expires At: <strong>{new Date(Number(proposal.lock_expires_at) * 1000).toLocaleTimeString()}</strong></span>
+                  )}
+                </div>
+              </div>
+            )}
+
             <div className="table-wrap">
               <table>
                 <thead>
@@ -581,6 +831,7 @@ export default function App() {
                     <th>Available Slots</th>
                     <th>Turnaround (Hours)</th>
                     <th>Autonomous Rationale</th>
+                    <th>Verification</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -590,6 +841,13 @@ export default function App() {
                       <td>{o.available_quantity}</td>
                       <td>{o.estimated_delivery_hours}h</td>
                       <td>{o.rationale}</td>
+                      <td>
+                        {o.onchain_verified ? (
+                          <span className="verified-badge">✓ Coral On-Chain</span>
+                        ) : (
+                          <span style={{ fontSize: '11px', color: '#94a3b8' }}>Catalog Fallback</span>
+                        )}
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -681,6 +939,16 @@ export default function App() {
                             {c.tx_hash && (
                               <span className="mono-hash" title={c.tx_hash} style={{ fontSize: '10px' }}>
                                 Tx: {c.tx_hash.slice(0, 10)}...
+                              </span>
+                            )}
+                            {c.lock_id && (
+                              <span
+                                className="mono-hash"
+                                title={`Converted atomically from capacity lock ${c.lock_id} (Click to inspect)`}
+                                onClick={() => inspectLock(c.lock_id!)}
+                                style={{ fontSize: '9px', color: '#7c3aed', cursor: 'pointer' }}
+                              >
+                                🔒 Lock: {c.lock_id.slice(0, 8)}...
                               </span>
                             )}
                           </div>
@@ -1000,6 +1268,53 @@ export default function App() {
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
               <button className="secondary" onClick={() => setDirectRpcResult(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: CAPACITY LOCK INSPECTION */}
+      {lockModalTarget && (
+        <div className="modal-overlay">
+          <div className="modal-box" style={{ maxWidth: '640px' }}>
+            <div className="modal-header">
+              <div>
+                <h3 style={{ margin: 0 }}>🔒 On-Chain Capacity Lock (Two-Phase Commit)</h3>
+                <span style={{ fontSize: '12px', color: '#047857', fontWeight: 600 }}>
+                  Pre-commitment capacity reservation holding slots on Coral Testnet
+                </span>
+              </div>
+              <button className="close-btn" onClick={() => setLockModalTarget(null)}>×</button>
+            </div>
+
+            <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '12px 14px', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong style={{ color: '#15803d', fontSize: '13px' }}>
+                  Lock Status: {lockModalTarget.status.toUpperCase()}
+                </strong>
+                <span className={`status-pill ${getStatusBadgeClass(lockModalTarget.status === 'Active' ? 'proposed' : lockModalTarget.status === 'Converted' ? 'committed' : 'cancelled')}`}>
+                  {lockModalTarget.status}
+                </span>
+              </div>
+              <div style={{ fontSize: '11px', color: '#475569', marginTop: '4px' }}>
+                Quantity: <strong>{lockModalTarget.quantity} slot(s)</strong> held exclusively for requester
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gap: '8px', fontSize: '12px', background: '#f8fafc', padding: '14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+              <div><strong>Lock ID:</strong> <span className="mono-hash">{lockModalTarget.lockId}</span></div>
+              <div><strong>Requester Wallet:</strong> <span className="mono-hash">{lockModalTarget.requester}</span></div>
+              <div><strong>Provider Wallet:</strong> <span className="mono-hash">{lockModalTarget.provider}</span></div>
+              <div><strong>Resource Type:</strong> <span className="mono-hash">{lockModalTarget.resourceType}</span></div>
+              <div><strong>Created At:</strong> {new Date(Number(lockModalTarget.createdAt) * 1000).toLocaleString()}</div>
+              <div><strong>Expires At:</strong> {new Date(Number(lockModalTarget.expiresAt) * 1000).toLocaleString()}</div>
+              {lockModalTarget.reservationId && lockModalTarget.reservationId !== '0x0000000000000000000000000000000000000000000000000000000000000000' && (
+                <div><strong>Bound Reservation ID:</strong> <span className="mono-hash">{lockModalTarget.reservationId}</span></div>
+              )}
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button className="secondary" onClick={() => setLockModalTarget(null)}>Close</button>
             </div>
           </div>
         </div>
