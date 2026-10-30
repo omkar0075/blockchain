@@ -270,52 +270,78 @@ stateDiagram-v2
 
 ## 📂 Repository Structure
 
+The repository is structured as a modular monorepo containing the smart contracts, Python FastAPI backend, React coordinator frontend, and independent verification utilities:
+
 ```text
 blockchain/
-├── backend/
-│   ├── app/
-│   │   ├── __init__.py
-│   │   ├── agents.py                 # Multi-agent capacity discovery & constraint matching
-│   │   ├── auth.py                   # RBAC authentication & contract owner arbitrator sync
-│   │   ├── blockchain.py             # Subprocess bridge calling Node.js Viem service
-│   │   ├── data.py                   # Initial hospital & lab capacity registries
-│   │   ├── db.py                     # SQLite persistence, schema migrations & hash-chained audit
-│   │   ├── main.py                   # FastAPI REST API endpoints
-│   │   └── models.py                 # Pydantic models for requests, proposals & commitments
-│   ├── .env                          # Local environment configuration (relayer & institution keys)
-│   ├── blockchain-service.js         # Standalone Viem CLI & bridge service (CJS, no Hardhat)
-│   ├── package.json                  # Viem & Dotenv dependencies
-│   ├── requirements.txt              # FastAPI, Uvicorn, Pydantic dependencies
-│   └── test-system-verification.py   # Comprehensive 8-module end-to-end verification suite
-├── contracts/
-│   ├── contracts/
-│   │   ├── Counter.sol               # Sample contract
-│   │   ├── Counter.t.sol             # Foundry unit & fuzz test contract
-│   │   └── MEDwayReservation.sol     # Production EIP-712 & Identity Registry smart contract
-│   ├── scripts/
-│   │   ├── check-coral-signer.ts     # Keystore signer verification script
-│   │   ├── deploy-upgraded-coral.cjs # Live Coral deployment & institution registration runner
-│   │   ├── relay-coral-reservation.ts# Live sponsored reservation runner
-│   │   ├── test-gasless-lifecycle.ts # End-to-end Hardhat test lifecycle
-│   │   └── verify-deployment.ts      # Bytecode and EIP-712 domain verification
-│   ├── test/
-│   │   ├── Counter.ts                # Counter integration test
-│   │   └── MEDwayReservation.ts      # 70-test comprehensive Hardhat + Foundry suite
-│   ├── hardhat.config.ts             # Hardhat 3 config with Coral network & viaIR optimizer
-│   └── package.json                  # Hardhat, Viem, and Toolbox dependencies
-├── frontend/
-│   ├── src/
-│   │   ├── App.tsx                   # Reactive coordinator dashboard with Direct RPC Verify
-│   │   ├── main.tsx                  # React DOM entry point
-│   │   └── styles.css                # Clean dashboard styles
-│   ├── package.json                  # Vite & React dependencies
-│   └── vite.config.ts                # Vite build configuration
-├── tools/
-│   └── verify-onchain.js             # Zero-backend independent Coral Testnet verifier CLI
-├── .env.example                      # Template configuration for local reproduction
-├── .gitignore                        # Prevents secret key leaks
-├── LICENSE                           # MIT License
-└── README.md                         # Complete project documentation
+├── 📁 backend/                             # Python FastAPI Backend & Viem Subprocess Bridge
+│   ├── 📁 app/                             # Application core logic & REST API modules
+│   │   ├── __init__.py                     # Module initializer
+│   │   ├── agents.py                       # Multi-agent capacity discovery, scoring & constraint matching
+│   │   ├── auth.py                         # RBAC authentication, API key validation & owner-arbitrator sync
+│   │   ├── blockchain.py                   # Subprocess bridge interfacing with standalone Viem service
+│   │   ├── data.py                         # Mock institutional registries for regional hospitals & labs
+│   │   ├── db.py                           # SQLite schema migrations, persistence & SHA-256 audit hash-chain
+│   │   ├── main.py                         # FastAPI REST endpoints (proposals, commitments, disputes, audit)
+│   │   └── models.py                       # Pydantic v2 schemas for requests, commitments & evidence
+│   ├── 📁 data/                            # Persistent SQLite storage directory
+│   │   └── medway.db                       # Active SQLite database (commitments, proposals & audit logs)
+│   ├── blockchain-service.js               # Standalone Node.js Viem CLI & bridge service (CJS, no Hardhat)
+│   ├── check-coral.js                      # Diagnostic script to test Coral Testnet RPC latency & connectivity
+│   ├── verify-contract-state.js            # Node.js inspection script for live on-chain contract mappings
+│   ├── test-system-verification.py         # Comprehensive 8-module end-to-end system verification suite
+│   ├── test_api_endpoints.py               # Automated test suite for FastAPI REST endpoints & RBAC guards
+│   ├── requirements.txt                    # Python dependencies (FastAPI, Uvicorn, Pydantic, HTTPX)
+│   ├── package.json                        # Node.js dependencies for Viem bridge (viem, dotenv)
+│   └── .env                                # Local environment secrets (relayer & institutional private keys)
+│
+├── 📁 contracts/                           # Solidity Smart Contracts, Hardhat 3 & Test Suites
+│   ├── 📁 contracts/                       # EVM Smart Contract source files
+│   │   ├── MEDwayReservation.sol          # Production contract (EIP-712 meta-tx, Identity Registry, Arbitration)
+│   │   ├── Counter.sol                     # Reference sample contract
+│   │   └── Counter.t.sol                   # Foundry unit & fuzz test contract (Solidity tests)
+│   ├── 📁 scripts/                         # Deployment, verification & interaction operational scripts
+│   │   ├── deploy-upgraded-coral.cjs       # Production Coral deployment & initial institution accreditation
+│   │   ├── deploy-medway.ts                # TypeScript deployment script
+│   │   ├── verify-deployment.ts            # Bytecode verification & EIP-712 domain separator validation
+│   │   ├── verify-medway.ts                # On-chain state inspection & reservation status lookup
+│   │   ├── check-coral.ts                  # Coral RPC endpoint reachability and block height verification
+│   │   ├── check-coral-signer.ts           # Relayer keystore address & native MST balance verifier
+│   │   ├── relay-coral-reservation.ts      # Live sponsored gasless reservation execution runner
+│   │   ├── relay-reservation.ts            # Generic relayer submission runner
+│   │   ├── create-reservation.ts           # Direct reservation proposal creation script
+│   │   ├── accept-reservation.ts           # Direct provider reservation acceptance script
+│   │   ├── fulfill-reservation.ts          # Direct provider fulfillment attestation script
+│   │   ├── test-gasless-lifecycle.ts       # End-to-end gasless simulation lifecycle runner
+│   │   ├── test-security-suite.ts          # Standalone adversarial security verification script
+│   │   ├── test-unauthorized-fulfill.ts    # Unauthorized third-party fulfillment rejection script
+│   │   └── load-env.ts                     # Multi-environment configuration & key loader utility
+│   ├── 📁 test/                            # Automated test specifications
+│   │   ├── MEDwayReservation.ts           # 95-test comprehensive Hardhat suite (Node.js + Foundry viaIR)
+│   │   └── Counter.ts                      # Counter integration test
+│   ├── 📁 ignition/modules/                # Hardhat Ignition deployment configurations
+│   │   └── Counter.ts                      # Deployment module for Counter
+│   ├── hardhat.config.ts                   # Hardhat 3 configuration (Solidity 0.8.34, viaIR, Coral Testnet)
+│   ├── tsconfig.json                       # TypeScript compiler configuration for contract tooling
+│   └── package.json                        # Development dependencies (Hardhat, Viem, Toolbox, Types)
+│
+├── 📁 frontend/                            # React 18 Coordinator Dashboard & Direct RPC Verifier
+│   ├── 📁 src/                             # Application source code
+│   │   ├── App.tsx                         # Reactive coordinator dashboard with Direct RPC Verify widget
+│   │   ├── main.tsx                        # React DOM root entry point
+│   │   └── styles.css                      # Modern responsive healthcare UI design system
+│   ├── index.html                          # Single-page application HTML entry
+│   ├── vite.config.ts                      # Vite build configuration & development proxy settings
+│   ├── tsconfig.json                       # TypeScript compiler options for React JSX
+│   └── package.json                        # Frontend dependencies (React 18, Vite, Lucide Icons)
+│
+├── 📁 tools/                               # Zero-Backend External Auditor Utilities
+│   └── verify-onchain.js                   # Independent on-chain verifier CLI (raw eth_call + SHA-256 terms attestation)
+│
+├── .env.example                            # Comprehensive environment variables template
+├── .gitignore                              # Git exclusion rules (secrets, venvs, artifacts & node_modules)
+├── LICENSE                                 # MIT Open Source License
+└── README.md                               # Complete project documentation, architecture & runbooks
 ```
 
 ---
@@ -549,6 +575,31 @@ Output:
 =================================================================
  ALL 8 VERIFICATION TEST MODULES PASSED SUCCESSFULLY!
 =================================================================
+```
+
+---
+
+### 3. FastAPI REST API Endpoint Test Suite (`8/8 Passing`)
+Tests end-to-end HTTP request handling, RBAC header authentication, invalid API key rejection, and anti-spoofing guards:
+
+```bash
+python backend/test_api_endpoints.py
+```
+
+Output:
+```text
+Testing FastAPI REST API Endpoints...
+  [+] GET /health -> 200 OK (Contract: 0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995)
+  [+] GET /institutions -> 200 OK (3 accredited institutions)
+  [+] GET /institutions/hospital-a/onchain -> 200 OK (City Hospital A | Role: Requester)
+  [+] GET /audit/verify -> 200 OK (Hash-chain Valid: True, Records: 35)
+  [+] GET /audit -> 200 OK (35 audit records in log)
+  [+] POST /requests with invalid API key correctly rejected -> 401 Unauthorized
+  [+] POST /requests with spoofed institution ID correctly rejected -> 403 Forbidden
+  [+] POST /requests with Hospital A credentials -> 200 OK (Selected Provider: lab-c)
+  [+] GET /commitments -> 200 OK (Commitments retrieved successfully)
+
+ALL FASTAPI REST ENDPOINTS PASSED VERIFICATION!
 ```
 
 ---
