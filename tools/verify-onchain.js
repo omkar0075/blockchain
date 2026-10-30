@@ -17,7 +17,10 @@ const crypto = require('crypto');
 const fs = require('fs');
 
 const RPC_URL = process.env.CORAL_RPC_URL || 'https://coralrpc.mstblockchain.com';
-const CONTRACT_ADDRESS = '0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC';
+const CONTRACT_ADDRESS =
+  process.env.CONTRACT_ADDRESS ||
+  process.env.MEDWAY_CONTRACT_ADDRESS ||
+  '0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995';
 const RESERVATIONS_SELECTOR = '0xa1b416f9'; // reservations(bytes32)
 
 const STATUS_NAMES = [

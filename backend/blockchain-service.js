@@ -47,7 +47,7 @@ const CHAIN_ID = parseInt(process.env.CHAIN_ID || '54635', 10);
 const CONTRACT_ADDRESS =
   process.env.CONTRACT_ADDRESS ||
   process.env.MEDWAY_CONTRACT_ADDRESS ||
-  '0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC';
+  '0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995';
 
 // Relayer private key (optional: if omitted, write calls report relayer unconfigured)
 const RELAYER_KEY =
@@ -707,6 +707,42 @@ async function cmdGetReservation(args) {
   });
 }
 
+async function cmdCheckInstitution(args) {
+  const target = args.wallet || args.institution || args.address || 'hospital-a';
+  let addr;
+  try {
+    addr = resolveAddress(target);
+  } catch {
+    addr = target;
+  }
+  const client = getPublicClient();
+  const artifact = loadArtifact();
+  const contract = getContract({
+    address: CONTRACT_ADDRESS,
+    abi: artifact.abi,
+    client,
+  });
+
+  const [info, isRequester, isProvider] = await Promise.all([
+    contract.read.getInstitutionByWallet([addr]),
+    contract.read.isRequesterWallet([addr]),
+    contract.read.isProviderWallet([addr]),
+  ]);
+
+  const roleNames = ['None', 'Requester', 'Provider', 'Both'];
+  jsonOut({
+    success: true,
+    address: addr,
+    institutionId: info[0],
+    name: info[1],
+    role: roleNames[info[2]] || 'Unknown',
+    roleCode: info[2],
+    active: info[3],
+    isRequesterWallet: isRequester,
+    isProviderWallet: isProvider,
+  });
+}
+
 // -------------------------------------------------------------------
 // CLI Argument Parsing
 // -------------------------------------------------------------------
@@ -764,8 +800,12 @@ async function main() {
     case 'resolve-dispute':
       await cmdResolveDispute(args);
       break;
+    case 'check-institution':
+    case 'institution':
+      await cmdCheckInstitution(args);
+      break;
     default:
-      throw new Error(`Unknown command '${command}'. Use status, create, accept, get, fulfill, dispute, or resolve.`);
+      throw new Error(`Unknown command '${command}'. Use status, create, accept, get, fulfill, dispute, resolve, or check-institution.`);
   }
 }
 

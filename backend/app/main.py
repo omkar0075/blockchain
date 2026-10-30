@@ -24,6 +24,7 @@ from .blockchain import (
     dispute_onchain_reservation,
     resolve_onchain_dispute,
     get_onchain_reservation,
+    check_institution_onchain,
 )
 from .data import INSTITUTIONS
 from .db import (
@@ -137,6 +138,15 @@ def health():
 @app.get("/institutions")
 def list_institutions():
     return INSTITUTIONS
+
+
+@app.get("/institutions/{institution_id}/onchain")
+def get_institution_onchain_registry(institution_id: str):
+    """Query on-chain accreditation status and authorized role directly from Coral Testnet."""
+    res = check_institution_onchain(institution_id)
+    if not res.get("success"):
+        raise HTTPException(status_code=502, detail=res.get("error", "Failed to query Coral registry"))
+    return res
 
 
 @app.post("/requests", response_model=AllocationProposal)

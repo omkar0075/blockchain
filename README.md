@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI_Python_3.11+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Viem](https://img.shields.io/badge/Web3_Bridge-Viem_v2.57-black?style=for-the-badge&logo=v&logoColor=white)](https://viem.sh)
 [![React 18](https://img.shields.io/badge/Frontend-React_18_Vite-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
-[![Tests Passing](https://img.shields.io/badge/Tests-62%2F62_Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white)](contracts/test)
+[![Tests Passing](https://img.shields.io/badge/Tests-70%2F70_Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white)](contracts/test)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 
 [Overview](#-executive-summary--problem-statement) • [Core Pillars](#-core-architectural-pillars) • [System Architecture](#-system-architecture) • [Live On-Chain Verification](#-live-on-chain-verification-summary) • [Smart Contract](#-smart-contract-specification) • [Getting Started](#-getting-started--local-development) • [Testing](#-testing--verification-suite) • [API Reference](#-api-specification) • [Security & Privacy](#-security-privacy--compliance)
@@ -107,10 +107,11 @@ flowchart TB
     end
 
     subgraph CHAIN["4. On-Chain Ledger Tier (MST Coral Testnet - Chain ID 54635)"]
-        D1["MEDwayReservation.sol<br/>(0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC)"]
-        D2["EIP-712 Signature Verification<br/>(ecrecover + Nonces)"]
-        D3["Atomic State Engine<br/>(Proposed to Committed to Fulfilled)"]
-        D4["7-Day Dispute Window & Resolution"]
+        D1["MEDwayReservation.sol<br/>(0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995)"]
+        D2["Institutional Identity Registry<br/>(Multi-Wallet RBAC + Lookup)"]
+        D3["EIP-712 Signature Verification<br/>(ecrecover + Nonces)"]
+        D4["Atomic State Engine<br/>(Proposed to Committed to Fulfilled)"]
+        D5["7-Day Dispute Window & Resolution"]
     end
 
     UI -->|"HTTP / JSON"| API
@@ -174,19 +175,18 @@ sequenceDiagram
 
 | Parameter | On-Chain Verification Record |
 | :--- | :--- |
-| **Smart Contract Address** | [`0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC`](https://coralrpc.mstblockchain.com) |
+| **Smart Contract Address** | [`0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995`](https://coralrpc.mstblockchain.com) |
 | **Network & Chain ID** | **MST Coral Testnet** (`54635`) |
 | **RPC Endpoint** | `https://coralrpc.mstblockchain.com` |
 | **Contract Owner / Arbiter** | `0x5E5BB85E3f92389a75e8b555490c99af8B0e8607` |
-| **Relayer (Gas Sponsor)** | `0x5E5BB85E3f92389a75e8b555490c99af8B0e8607` (~99.98 MST) |
-| **Live Reservation ID** | `0xa550bd19b71e87ff0515504c9bf6d2d03e8a428174772650f8305acab0ac7ccf` |
-| **1. Proposal Creation Tx** | [`0xeb0218194a917781835eb24cf6774b75df9d11e086747dd43ce7c359da5bdafa`](https://coralrpc.mstblockchain.com) (Block **#386800**) |
-| **2. Provider Acceptance Tx**| [`0xa1f7f1874faaa9e6558015b7603699cfc4a3c14960636e7c08c4ba9911537b8b`](https://coralrpc.mstblockchain.com) (Block **#386823**) |
-| **3. Delivery Fulfillment Tx**| [`0x8d6478f000751395e7afb79c30f182a81980630b8a21dffa4d9b92b81f7dc2f8`](https://coralrpc.mstblockchain.com) (Block **#387308**) |
-| **4. Hospital Dispute Tx** | [`0xd8ef51f82fd5645c7921c8b03f602e194cca08cd24b634608c8fd94f58b9f4c7`](https://coralrpc.mstblockchain.com) (Block **#387406**) |
-| **5. Arbitration Resolution Tx**| [`0x3f9313fd27bd8d42d79b6b99c5b1cd4291bed513733e674f9cdf01ff3a215187`](https://coralrpc.mstblockchain.com) (Block **#387417**) |
-| **Hospital A Identity** | `0x4dB8336edB0af7FeD1311312081689993F80a18B` (Gas Sponsored: **0 MST Spent**) |
-| **Lab C Identity** | `0xb05049cc2A5a1c28979DEafc82B82749681DA92C` (Gas Sponsored: **0 MST Spent**) |
+| **Relayer (Gas Sponsor)** | `0x5E5BB85E3f92389a75e8b555490c99af8B0e8607` (~99.97 MST) |
+| **Contract Deployment Tx** | [`0xc42915e5b1110b682e48e84900887d817c63aa0b6bb014e99177420778d8b7b8`](https://coralrpc.mstblockchain.com) (Block **#401945**) |
+| **Hospital A Registration**| [`0xf8e2c73cc583f108bb2438d3b81888e6ce4974001b4a1255cb24bd273b759420`](https://coralrpc.mstblockchain.com) (Block **#401947**) |
+| **Hospital B Registration**| [`0x7e51a9db1c95f74ea87672640f0ec2875dd9d2afedd8f8ffb38b4723d74ae33e`](https://coralrpc.mstblockchain.com) (Block **#401949**) |
+| **Lab C Registration** | [`0x7100dd1675583cc192e14f5217934591d13a447555c41b31b05045e10c738d02`](https://coralrpc.mstblockchain.com) (Block **#401952**) |
+| **Hospital A Identity** | `0x4dB8336edB0af7FeD1311312081689993F80a18B` (Role: **Requester** · Gas Sponsored: **0 MST Spent**) |
+| **Hospital B Identity** | `0x70997970c51812e33987251372ecdbc2b3f3bb6e` (Role: **Requester** · Gas Sponsored: **0 MST Spent**) |
+| **Lab C Identity** | `0xb05049cc2A5a1c28979DEafc82B82749681DA92C` (Role: **Provider** · Gas Sponsored: **0 MST Spent**) |
 | **Complete State Lifecycle**| **`Proposed` $\rightarrow$ `Committed` $\rightarrow$ `Fulfilled` $\rightarrow$ `Disputed` $\rightarrow$ `Cancelled` (Resolved)** |
 | **Dispute Window Window** | **`604,800` seconds (7 days)** |
 
@@ -309,7 +309,7 @@ Your `backend/.env` should contain:
 # MST Coral Testnet
 CORAL_RPC_URL=https://coralrpc.mstblockchain.com
 CHAIN_ID=54635
-CONTRACT_ADDRESS=0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC
+CONTRACT_ADDRESS=0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995
 
 # Relayer Key (Sponsors Gas on Coral)
 CORAL_PRIVATE_KEY=0x...
@@ -344,7 +344,7 @@ Expected output:
   "connected": true,
   "network": "Coral Testnet",
   "chainId": 54635,
-  "contractAddress": "0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC",
+  "contractAddress": "0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995",
   "latestBlock": 386825,
   "relayer": {
     "configured": true,
@@ -477,7 +477,7 @@ Running node:test tests
       ✔ Should transition an unaccepted gasless proposal to Expired after deadline passes
       ✔ Should reject acceptReservationWithSig if the reservation has already expired
 
-62 passing (3 solidity, 59 nodejs)
+70 passing (3 solidity, 67 nodejs)
 ```
 
 ---
@@ -486,8 +486,9 @@ Running node:test tests
 
 | Method | Endpoint | Description | Sample Response / Status |
 | :--- | :--- | :--- | :--- |
-| `GET` | `/health` | Health check & Coral Testnet connection status | `{ "status": "ok", "blockchain": { "status": "connected", "latest_block": 386825 } }` |
+| `GET` | `/health` | Health check & Coral Testnet connection status | `{ "status": "ok", "blockchain": { "status": "connected", "latest_block": 402066 } }` |
 | `GET` | `/institutions` | List participating healthcare centers and resources | `[ { "id": "hospital-a", "name": "City Hospital A" }, ... ]` |
+| `GET` | `/institutions/{id}/onchain` | Verify institutional accreditation directly on Coral Testnet | `{ "success": true, "role": "Requester", "active": true, "isRequesterWallet": true }` |
 | `POST` | `/requests` | Submit resource shortage; triggers discovery agent | `{ "proposal_id": "...", "selected_provider_id": "lab-c", "status": "proposed" }` |
 | `POST` | `/proposals/{id}/authorize` | Human coordinator sign-off; triggers on-chain commit | `{ "status": "authorized", "commitment": { "tx_hash": "0xeb0218...", "block_number": 386800 } }` |
 | `POST` | `/commitments/{id}/accept` | Provider EIP-712 acceptance on Coral Testnet | `{ "status": "committed", "blockchain": { "txHash": "0xa1f7f1..." } }` |

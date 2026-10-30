@@ -24,8 +24,30 @@ describe("MEDwayReservation", async function () {
     Disputed: 5,
   } as const;
 
+  const InstitutionRole = {
+    None: 0,
+    Requester: 1,
+    Provider: 2,
+    Both: 3,
+  } as const;
+
+  const hospitalAId = pad(stringToHex("hospital-a"), { size: 32 });
+  const labCId = pad(stringToHex("lab-c"), { size: 32 });
+
   async function deployFixture() {
     const medway = await viem.deployContract("MEDwayReservation");
+
+    // Register standard test participants
+    await medway.write.registerInstitution(
+      [hospitalAId, "City Hospital A", InstitutionRole.Requester, requester.account.address],
+      { account: deployer.account }
+    );
+
+    await medway.write.registerInstitution(
+      [labCId, "Central Diagnostic Lab C", InstitutionRole.Provider, provider.account.address],
+      { account: deployer.account }
+    );
+
     return { medway };
   }
 
@@ -1397,6 +1419,193 @@ describe("MEDwayReservation", async function () {
         medway,
         "InvalidExpiry"
       );
+    });
+  });
+
+  describe("Institutional Identity Registry (Feature 2)", function () {
+    it("Should register a new institution and emit InstitutionRegistered event", async function () {
+      const { medway } = await deployFixture();
+      const newInstId = pad(stringToHex("hospital-b"), { size: 32 });
+
+      const txHash = await medway.write.registerInstitution(
+        [newInstId, "Community Hospital B", InstitutionRole.Requester, thirdParty.account.address],
+        { account: deployer.account }
+      );
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      const logs = parseEventLogs({
+        abi: medway.abi,
+        logs: receipt.logs,
+        eventName: "InstitutionRegistered",
+      });
+
+      assert.equal(logs.length, 1);
+      assert.equal(logs[0].args.institutionId, newInstId);
+      assert.equal(logs[0].args.name, "Community Hospital B");
+      assert.equal(logs[0].args.role, InstitutionRole.Requester);
+
+      const walletLogs = parseEventLogs({
+        abi: medway.abi,
+        logs: receipt.logs,
+        eventName: "WalletAuthorized",
+      });
+      assert.equal(walletLogs.length, 1);
+      assert.equal(walletLogs[0].args.wallet.toLowerCase(), thirdParty.account.address.toLowerCase());
+
+      const isReq = await medway.read.isRequesterWallet([thirdParty.account.address]);
+      assert.equal(isReq, true);
+    });
+
+    it("Should allow owner to authorize multiple wallets for an institution", async function () {
+      const { medway } = await deployFixture();
+      const [, , , , extraWallet] = await viem.getWalletClients();
+
+      const txHash = await medway.write.authorizeWallet(
+        [hospitalAId, extraWallet.account.address],
+        { account: deployer.account }
+      );
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      const logs = parseEventLogs({
+        abi: medway.abi,
+        logs: receipt.logs,
+        eventName: "WalletAuthorized",
+      });
+      assert.equal(logs.length, 1);
+      assert.equal(logs[0].args.institutionId, hospitalAId);
+      assert.equal(logs[0].args.wallet.toLowerCase(), extraWallet.account.address.toLowerCase());
+
+      // Both wallets should now be active requesters
+      assert.equal(await medway.read.isRequesterWallet([requester.account.address]), true);
+      assert.equal(await medway.read.isRequesterWallet([extraWallet.account.address]), true);
+    });
+
+    it("Should allow owner to revoke a wallet and emit WalletRevoked event", async function () {
+      const { medway } = await deployFixture();
+
+      const txHash = await medway.write.revokeWallet(
+        [requester.account.address],
+        { account: deployer.account }
+      );
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      const logs = parseEventLogs({
+        abi: medway.abi,
+        logs: receipt.logs,
+        eventName: "WalletRevoked",
+      });
+      assert.equal(logs.length, 1);
+      assert.equal(logs[0].args.institutionId, hospitalAId);
+      assert.equal(logs[0].args.wallet.toLowerCase(), requester.account.address.toLowerCase());
+
+      assert.equal(await medway.read.isRequesterWallet([requester.account.address]), false);
+    });
+
+    it("Should reject non-owner from registering institutions or managing wallets", async function () {
+      const { medway } = await deployFixture();
+      const testInstId = pad(stringToHex("hospital-rogue"), { size: 32 });
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.registerInstitution(
+          [testInstId, "Rogue Hospital", InstitutionRole.Requester, thirdParty.account.address],
+          { account: thirdParty.account }
+        ),
+        medway,
+        "Unauthorized"
+      );
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.authorizeWallet(
+          [hospitalAId, thirdParty.account.address],
+          { account: thirdParty.account }
+        ),
+        medway,
+        "Unauthorized"
+      );
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.revokeWallet(
+          [requester.account.address],
+          { account: thirdParty.account }
+        ),
+        medway,
+        "Unauthorized"
+      );
+    });
+
+    it("Should reject reservation creation by unregistered or revoked requester wallet", async function () {
+      const { medway } = await deployFixture();
+      const now = BigInt(await networkHelpers.time.latest());
+      const expiresAt = now + 3600n;
+
+      // Third party is not a registered requester
+      await viem.assertions.revertWithCustomError(
+        medway.write.createReservation(
+          [provider.account.address, sampleResourceRef, expiresAt],
+          { account: thirdParty.account }
+        ),
+        medway,
+        "UnauthorizedRequester"
+      );
+
+      // Revoke requester and confirm they cannot create proposals
+      await medway.write.revokeWallet([requester.account.address], { account: deployer.account });
+      await viem.assertions.revertWithCustomError(
+        medway.write.createReservation(
+          [provider.account.address, sampleResourceRef, expiresAt],
+          { account: requester.account }
+        ),
+        medway,
+        "UnauthorizedRequester"
+      );
+    });
+
+    it("Should reject reservation creation targeting an unregistered provider wallet", async function () {
+      const { medway } = await deployFixture();
+      const now = BigInt(await networkHelpers.time.latest());
+      const expiresAt = now + 3600n;
+
+      // Third party is not a registered provider
+      await viem.assertions.revertWithCustomError(
+        medway.write.createReservation(
+          [thirdParty.account.address, sampleResourceRef, expiresAt],
+          { account: requester.account }
+        ),
+        medway,
+        "UnauthorizedProvider"
+      );
+    });
+
+    it("Should reject reservation acceptance by revoked provider wallet", async function () {
+      const { medway } = await deployFixture();
+      const { reservationId } = await createSampleReservation(medway);
+
+      // Revoke provider wallet
+      await medway.write.revokeWallet([provider.account.address], { account: deployer.account });
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.acceptReservation([reservationId], { account: provider.account }),
+        medway,
+        "UnauthorizedProvider"
+      );
+    });
+
+    it("Should provide public wallet lookup verifying institution membership and state", async function () {
+      const { medway } = await deployFixture();
+
+      const [instId, name, role, isInstActive, isWalletActive] = await medway.read.getInstitutionByWallet([
+        requester.account.address,
+      ]);
+
+      assert.equal(instId, hospitalAId);
+      assert.equal(name, "City Hospital A");
+      assert.equal(role, InstitutionRole.Requester);
+      assert.equal(isInstActive, true);
+      assert.equal(isWalletActive, true);
+
+      // Unregistered wallet
+      const [unknownId] = await medway.read.getInstitutionByWallet([thirdParty.account.address]);
+      assert.equal(unknownId, zeroBytes32);
     });
   });
 });

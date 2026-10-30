@@ -150,3 +150,12 @@ def resolve_onchain_dispute(
     if notes:
         cmd.extend(["--notes", notes])
     return _run_node_command(cmd)
+
+
+def check_institution_onchain(identifier: str) -> dict[str, Any]:
+    """Verify institution accreditation and wallet role directly from Coral Testnet registry."""
+    return _run_node_command([
+        "check-institution",
+        "--institution",
+        identifier,
+    ])

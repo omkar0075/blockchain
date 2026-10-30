@@ -17,7 +17,7 @@ async function main() {
   const relayer = walletClients[0];
 
   const contractAddress = (process.env.CONTRACT_ADDRESS ||
-    "0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC") as `0x${string}`;
+    "0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995") as `0x${string}`;
 
   console.log(`Loading upgraded MEDwayReservation at: ${contractAddress}`);
   const reservation = await viem.getContractAt("MEDwayReservation", contractAddress);

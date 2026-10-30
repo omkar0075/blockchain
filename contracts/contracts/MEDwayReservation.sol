@@ -2,8 +2,8 @@
 pragma solidity ^0.8.28;
 
 /// @title MEDwayReservation
-/// @notice On-chain commitments for MEDway healthcare resource coordination with EIP-712 meta-transaction support.
-/// @dev Patient data, inventory details, and private negotiations stay off-chain.
+/// @notice On-chain commitments and institutional identity registry for MEDway healthcare resource coordination with EIP-712 meta-transaction support.
+/// @dev Patient data, clinical records, and private negotiations stay strictly off-chain.
 contract MEDwayReservation {
     enum Status {
         Proposed,
@@ -12,6 +12,27 @@ contract MEDwayReservation {
         Cancelled,
         Expired,
         Disputed
+    }
+
+    enum InstitutionRole {
+        None,
+        Requester,
+        Provider,
+        Both
+    }
+
+    struct Institution {
+        bytes32 id;
+        string name;
+        InstitutionRole role;
+        bool isActive;
+        uint64 registeredAt;
+    }
+
+    struct WalletInfo {
+        bytes32 institutionId;
+        bool isActive;
+        uint64 authorizedAt;
     }
 
     struct Reservation {
@@ -59,6 +80,12 @@ contract MEDwayReservation {
     mapping(bytes32 => Reservation) public reservations;
     mapping(bytes32 => bool) public exists;
 
+    // Institutional Identity Registry
+    mapping(bytes32 => Institution) public institutions;
+    mapping(bytes32 => bool) public institutionExists;
+    mapping(address => WalletInfo) public wallets;
+
+    // Events - Reservations
     event ReservationCreated(
         bytes32 indexed reservationId,
         address indexed requester,
@@ -83,6 +110,28 @@ contract MEDwayReservation {
         bytes32 resolutionEvidence
     );
 
+    // Events - Institutional Registry
+    event InstitutionRegistered(
+        bytes32 indexed institutionId,
+        string name,
+        InstitutionRole role,
+        uint64 registeredAt
+    );
+    event InstitutionStatusChanged(
+        bytes32 indexed institutionId,
+        bool isActive
+    );
+    event WalletAuthorized(
+        bytes32 indexed institutionId,
+        address indexed wallet,
+        uint64 authorizedAt
+    );
+    event WalletRevoked(
+        bytes32 indexed institutionId,
+        address indexed wallet
+    );
+
+    // Errors
     error Unauthorized();
     error InvalidAddress();
     error InvalidExpiry();
@@ -93,6 +142,20 @@ contract MEDwayReservation {
     error DisputeWindowClosed();
     error InvalidSignature();
     error SignatureExpired();
+
+    // Registry Errors
+    error InstitutionAlreadyExists();
+    error InstitutionNotFound();
+    error InstitutionInactive();
+    error WalletAlreadyAuthorized();
+    error WalletNotAuthorized();
+    error UnauthorizedRequester();
+    error UnauthorizedProvider();
+
+    modifier onlyOwner() {
+        if (msg.sender != owner) revert Unauthorized();
+        _;
+    }
 
     constructor() {
         owner = msg.sender;
@@ -120,6 +183,149 @@ contract MEDwayReservation {
         }
         return _buildDomainSeparator();
     }
+
+    // -------------------------------------------------------------------
+    // Institutional Identity Registry (Governance & Administration)
+    // -------------------------------------------------------------------
+
+    /// @notice Register a new accredited institution (Hospital or Diagnostic Provider).
+    function registerInstitution(
+        bytes32 institutionId,
+        string calldata name,
+        InstitutionRole role,
+        address primaryWallet
+    ) external onlyOwner {
+        if (institutionId == bytes32(0)) revert InvalidEvidence();
+        if (bytes(name).length == 0) revert InvalidEvidence();
+        if (role == InstitutionRole.None) revert InvalidStatus();
+        if (institutionExists[institutionId]) revert InstitutionAlreadyExists();
+
+        institutionExists[institutionId] = true;
+        institutions[institutionId] = Institution({
+            id: institutionId,
+            name: name,
+            role: role,
+            isActive: true,
+            registeredAt: uint64(block.timestamp)
+        });
+
+        emit InstitutionRegistered(institutionId, name, role, uint64(block.timestamp));
+
+        if (primaryWallet != address(0)) {
+            _authorizeWalletInternal(institutionId, primaryWallet);
+        }
+    }
+
+    /// @notice Authorize an additional or operational wallet for a registered institution.
+    function authorizeWallet(
+        bytes32 institutionId,
+        address wallet
+    ) external onlyOwner {
+        if (!institutionExists[institutionId]) revert InstitutionNotFound();
+        if (!institutions[institutionId].isActive) revert InstitutionInactive();
+        _authorizeWalletInternal(institutionId, wallet);
+    }
+
+    function _authorizeWalletInternal(
+        bytes32 institutionId,
+        address wallet
+    ) private {
+        if (wallet == address(0)) revert InvalidAddress();
+        WalletInfo storage w = wallets[wallet];
+        if (w.isActive && w.institutionId == institutionId) revert WalletAlreadyAuthorized();
+
+        wallets[wallet] = WalletInfo({
+            institutionId: institutionId,
+            isActive: true,
+            authorizedAt: uint64(block.timestamp)
+        });
+
+        emit WalletAuthorized(institutionId, wallet, uint64(block.timestamp));
+    }
+
+    /// @notice Revoke a specific wallet address from an institution.
+    function revokeWallet(address wallet) external onlyOwner {
+        WalletInfo storage w = wallets[wallet];
+        if (!w.isActive) revert WalletNotAuthorized();
+        bytes32 instId = w.institutionId;
+        w.isActive = false;
+
+        emit WalletRevoked(instId, wallet);
+    }
+
+    /// @notice Suspend or re-activate an institution.
+    function setInstitutionActive(bytes32 institutionId, bool isActive) external onlyOwner {
+        if (!institutionExists[institutionId]) revert InstitutionNotFound();
+        institutions[institutionId].isActive = isActive;
+        emit InstitutionStatusChanged(institutionId, isActive);
+    }
+
+    // -------------------------------------------------------------------
+    // Public Verification & Membership View Functions
+    // -------------------------------------------------------------------
+
+    /// @notice Verify whether a wallet is an active authorized requester.
+    function isRequesterWallet(address wallet) public view returns (bool) {
+        WalletInfo storage w = wallets[wallet];
+        if (!w.isActive) return false;
+        Institution storage inst = institutions[w.institutionId];
+        if (!inst.isActive) return false;
+        return (inst.role == InstitutionRole.Requester || inst.role == InstitutionRole.Both);
+    }
+
+    /// @notice Verify whether a wallet is an active authorized provider.
+    function isProviderWallet(address wallet) public view returns (bool) {
+        WalletInfo storage w = wallets[wallet];
+        if (!w.isActive) return false;
+        Institution storage inst = institutions[w.institutionId];
+        if (!inst.isActive) return false;
+        return (inst.role == InstitutionRole.Provider || inst.role == InstitutionRole.Both);
+    }
+
+    /// @notice Retrieve institution membership and active state for any wallet.
+    function getInstitutionByWallet(address wallet) external view returns (
+        bytes32 institutionId,
+        string memory name,
+        InstitutionRole role,
+        bool isInstitutionActive,
+        bool isWalletActive
+    ) {
+        WalletInfo storage w = wallets[wallet];
+        if (w.institutionId == bytes32(0)) {
+            return (bytes32(0), "", InstitutionRole.None, false, false);
+        }
+        Institution storage inst = institutions[w.institutionId];
+        return (
+            inst.id,
+            inst.name,
+            inst.role,
+            inst.isActive,
+            w.isActive
+        );
+    }
+
+    /// @notice Retrieve institution metadata by institution ID.
+    function getInstitution(bytes32 institutionId) external view returns (
+        bytes32 id,
+        string memory name,
+        InstitutionRole role,
+        bool isActive,
+        uint64 registeredAt
+    ) {
+        if (!institutionExists[institutionId]) revert InstitutionNotFound();
+        Institution storage inst = institutions[institutionId];
+        return (
+            inst.id,
+            inst.name,
+            inst.role,
+            inst.isActive,
+            inst.registeredAt
+        );
+    }
+
+    // -------------------------------------------------------------------
+    // Reservation Lifecycle (Enforced by Identity Registry)
+    // -------------------------------------------------------------------
 
     /// @notice Direct reservation proposal by requester.
     function createReservation(
@@ -178,6 +384,11 @@ contract MEDwayReservation {
         if (provider == address(0) || provider == requester) {
             revert InvalidAddress();
         }
+
+        // Enforce Institutional Identity Registry checks
+        if (!isRequesterWallet(requester)) revert UnauthorizedRequester();
+        if (!isProviderWallet(provider)) revert UnauthorizedProvider();
+
         if (expiresAt <= block.timestamp) revert InvalidExpiry();
         if (resourceRef == bytes32(0)) revert InvalidEvidence();
 
@@ -256,6 +467,9 @@ contract MEDwayReservation {
     }
 
     function _acceptReservationInternal(Reservation storage r, bytes32 reservationId) private {
+        // Enforce Provider Identity Registry check upon commitment
+        if (!isProviderWallet(r.provider)) revert UnauthorizedProvider();
+
         if (r.status != Status.Proposed) revert InvalidStatus();
         if (block.timestamp >= r.expiresAt) revert InvalidExpiry();
 
@@ -268,6 +482,7 @@ contract MEDwayReservation {
     function fulfillReservation(bytes32 reservationId) external {
         Reservation storage r = _get(reservationId);
         if (msg.sender != r.provider) revert Unauthorized();
+        if (!isProviderWallet(r.provider)) revert UnauthorizedProvider();
         if (r.status != Status.Committed) revert InvalidStatus();
         if (block.timestamp > r.expiresAt) revert InvalidExpiry();
 

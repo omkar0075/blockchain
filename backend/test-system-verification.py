@@ -17,7 +17,11 @@ from app.auth import (
     verify_authorization_permission,
     verify_arbitration_permission,
 )
-from app.blockchain import get_blockchain_status, get_onchain_reservation
+from app.blockchain import (
+    get_blockchain_status,
+    get_onchain_reservation,
+    check_institution_onchain,
+)
 from app.db import (
     get_connection,
     save_commitment,
@@ -239,86 +243,41 @@ def test_audit_hash_chain_tamper_detection():
     print("  RESULT: PASSED (Mathematical hash-chain detects any tampering)")
 
 
-def test_coral_live_state():
-    print_header("TEST 6: Coral Testnet Live Reservation State Confirmation")
-    live_id = "0xa550bd19b71e87ff0515504c9bf6d2d03e8a428174772650f8305acab0ac7ccf"
-    onchain = get_onchain_reservation(live_id)
-    assert onchain.get("success"), "Failed to query Coral Testnet!"
-    assert onchain.get("exists"), f"Reservation {live_id} not found on Coral!"
+def test_coral_institutional_identity_registry():
+    print_header("TEST 6: On-Chain Institutional Identity Registry Verification")
+    
+    # 1. Verify Hospital A (Accredited Requester)
+    hosp_a = check_institution_onchain("hospital-a")
+    assert hosp_a.get("success"), "Failed to query Coral registry for hospital-a"
+    assert hosp_a["active"] is True, "hospital-a must be active on-chain"
+    assert hosp_a["roleCode"] == 1, "hospital-a must have Requester role (code 1)"
+    assert hosp_a["isRequesterWallet"] is True, "hospital-a must be authorized requester wallet"
+    assert hosp_a["isProviderWallet"] is False, "hospital-a must not be provider wallet"
+    print(f"  [+] Hospital A On-Chain Registry:   Active={hosp_a['active']} | Role={hosp_a['role']} ({hosp_a['name']})")
 
-    res = onchain["reservation"]
-    print(f"  [+] Live Reservation ID:  {live_id}")
-    print(f"  [+] Requester (Hospital): {res['requester']}")
-    print(f"  [+] Provider (Lab):       {res['provider']}")
-    print(f"  [+] Status Code:          {res['statusCode']} ({res['status']})")
-    print(f"  [+] Fulfilled At:         {res['fulfilledAt']}")
-    print(f"  [+] Disputed By:          {res['disputedBy']}")
-    print(f"  [+] Dispute Evidence:     {res['disputeEvidence']}")
-    print("  RESULT: PASSED (Confirmed directly against Coral Testnet RPC)")
+    # 2. Verify Lab C (Accredited Provider)
+    lab_c = check_institution_onchain("lab-c")
+    assert lab_c.get("success"), "Failed to query Coral registry for lab-c"
+    assert lab_c["active"] is True, "lab-c must be active on-chain"
+    assert lab_c["roleCode"] == 2, "lab-c must have Provider role (code 2)"
+    assert lab_c["isRequesterWallet"] is False, "lab-c must not be requester wallet"
+    assert lab_c["isProviderWallet"] is True, "lab-c must be authorized provider wallet"
+    print(f"  [+] Lab C On-Chain Registry:        Active={lab_c['active']} | Role={lab_c['role']} ({lab_c['name']})")
 
-
-def test_independent_rpc_and_terms_immutability():
-    print_header("TEST 7: Independent RPC Verification & Terms Immutability")
-    import urllib.request
-
-    live_id = "0xa550bd19b71e87ff0515504c9bf6d2d03e8a428174772650f8305acab0ac7ccf"
-    contract_addr = "0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC"
-    rpc_url = "https://coralrpc.mstblockchain.com"
-    selector = "0xa1b416f9"  # reservations(bytes32)
-
-    # 1. Pure Direct RPC call - zero backend dependency
-    payload = json.dumps({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": "eth_call",
-        "params": [
-            {"to": contract_addr, "data": selector + live_id[2:]},
-            "latest"
-        ]
-    }).encode("utf-8")
-
-    req = urllib.request.Request(rpc_url, data=payload, headers={"Content-Type": "application/json"})
-    with urllib.request.urlopen(req, timeout=15) as resp:
-        rpc_data = json.loads(resp.read().decode("utf-8"))
-
-    raw_result = rpc_data.get("result", "")
-    assert raw_result.startswith("0x") and len(raw_result) >= 640, "Invalid direct RPC response!"
-
-    hex_data = raw_result[2:]
-    words = [hex_data[i:i+64] for i in range(0, len(hex_data), 64)]
-    onchain_requester = "0x" + words[2][24:]
-    onchain_provider = "0x" + words[3][24:]
-    onchain_status_code = int(words[5], 16)
-    onchain_ref = "0x" + words[1]
-
-    print(f"  [+] Zero-Backend RPC Query: Successful to {rpc_url}")
-    print(f"  [+] Decoded On-Chain Requester: {onchain_requester}")
-    print(f"  [+] Decoded On-Chain Provider:  {onchain_provider}")
-    print(f"  [+] Decoded On-Chain Status:    {onchain_status_code} (Cancelled)")
-
-    # 2. Terms Immutability Proof
-    agreed_terms = {
-        "proposal_id": "prop-sample-01",
-        "requester": "hospital-a",
-        "provider": "lab-c",
-        "quantity": 3,
-        "resource_type": "diagnostic_slot",
-    }
-    canonical_hash = "0x" + hashlib.sha256(json.dumps(agreed_terms, sort_keys=True, separators=(',', ':')).encode("utf-8")).hexdigest()
-
-    tampered_terms = dict(agreed_terms)
-    tampered_terms["quantity"] = 2  # Silent modification attempt!
-    tampered_hash = "0x" + hashlib.sha256(json.dumps(tampered_terms, sort_keys=True, separators=(',', ':')).encode("utf-8")).hexdigest()
-
-    assert canonical_hash != tampered_hash, "Hash collision detected!"
-    print(f"  [+] Canonical Terms Hash: {canonical_hash}")
-    print(f"  [!] Tampered Terms Hash:  {tampered_hash}")
-    print("  [+] Mathematical Proof: Silent modification is immediately exposed because digest diverges.")
-    print("  RESULT: PASSED (Independent direct verification and terms immutability confirmed)")
+    # 3. Verify Unauthorized / Unregistered Wallet Rejection
+    fake_wallet = "0x1111111111111111111111111111111111111111"
+    unauth = check_institution_onchain(fake_wallet)
+    assert unauth.get("success"), "Failed to query Coral registry for unauthorized wallet"
+    assert unauth["active"] is False, "Unregistered wallet must be inactive"
+    assert unauth["roleCode"] == 0, "Unregistered wallet must have role None (code 0)"
+    assert unauth["isRequesterWallet"] is False, "Unregistered wallet must not be requester"
+    assert unauth["isProviderWallet"] is False, "Unregistered wallet must not be provider"
+    print(f"  [+] Unregistered Wallet ({fake_wallet[:10]}...): Active={unauth['active']} | Role={unauth['role']}")
+    print("  RESULT: PASSED (Institutional Identity Registry enforced on Coral Testnet)")
 
 
-def test_live_workflow_sqlite_pair_verification():
-    print_header("TEST 8: Live Backend Workflow -> SQLite -> Direct Coral Verification")
+def test_live_workflow_sqlite_pair_verification() -> str:
+    print_header("TEST 7: Live Backend Workflow -> SQLite -> Direct Coral Verification")
     import urllib.request
 
     # 1. Trigger live backend autonomous request and matchmaking
@@ -368,7 +327,7 @@ def test_live_workflow_sqlite_pair_verification():
 
     # 4. Independent Zero-Backend Verification against Coral Testnet RPC
     rpc_url = "https://coralrpc.mstblockchain.com"
-    contract_addr = "0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC"
+    contract_addr = os.getenv("CONTRACT_ADDRESS", "0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995")
     selector = "0xa1b416f9"  # reservations(bytes32)
 
     payload = json.dumps({
@@ -416,6 +375,67 @@ def test_live_workflow_sqlite_pair_verification():
     assert tampered_sha256.lower() != onchain_resource_ref.lower(), "Tampering must cause hash divergence"
     print(f"  [+] Tamper Detection on Live Pair: Quantity changed 3 -> 99 diverges hash ({tampered_sha256[:16]}...)")
     print("  RESULT: PASSED (Exact SQLite commitment verified against Coral Testnet storage)")
+    return onchain_res_id
+
+
+def test_independent_rpc_and_terms_immutability(live_id: str):
+    print_header("TEST 8: Independent Direct RPC Verification & Immutability Attestation")
+    import urllib.request
+
+    contract_addr = os.getenv("CONTRACT_ADDRESS", "0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995")
+    rpc_url = "https://coralrpc.mstblockchain.com"
+    selector = "0xa1b416f9"  # reservations(bytes32)
+
+    # 1. Pure Direct RPC call - zero backend dependency
+    payload = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_call",
+        "params": [
+            {"to": contract_addr, "data": selector + live_id[2:]},
+            "latest"
+        ]
+    }).encode("utf-8")
+
+    req = urllib.request.Request(rpc_url, data=payload, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=15) as resp:
+        rpc_data = json.loads(resp.read().decode("utf-8"))
+
+    raw_result = rpc_data.get("result", "")
+    assert raw_result.startswith("0x") and len(raw_result) >= 640, "Invalid direct RPC response!"
+
+    hex_data = raw_result[2:]
+    words = [hex_data[i:i+64] for i in range(0, len(hex_data), 64)]
+    onchain_requester = "0x" + words[2][24:]
+    onchain_provider = "0x" + words[3][24:]
+    onchain_status_code = int(words[5], 16)
+    onchain_ref = "0x" + words[1]
+
+    print(f"  [+] Zero-Backend RPC Query: Successful to {rpc_url}")
+    print(f"  [+] Decoded On-Chain Requester: {onchain_requester}")
+    print(f"  [+] Decoded On-Chain Provider:  {onchain_provider}")
+    print(f"  [+] Decoded On-Chain Status:    {onchain_status_code} (Proposed)")
+    print(f"  [+] Decoded resourceRef:        {onchain_ref}")
+
+    # 2. Terms Immutability Proof
+    agreed_terms = {
+        "proposal_id": "prop-sample-01",
+        "requester": "hospital-a",
+        "provider": "lab-c",
+        "quantity": 3,
+        "resource_type": "diagnostic_slot",
+    }
+    canonical_hash = "0x" + hashlib.sha256(json.dumps(agreed_terms, sort_keys=True, separators=(',', ':')).encode("utf-8")).hexdigest()
+
+    tampered_terms = dict(agreed_terms)
+    tampered_terms["quantity"] = 2  # Silent modification attempt!
+    tampered_hash = "0x" + hashlib.sha256(json.dumps(tampered_terms, sort_keys=True, separators=(',', ':')).encode("utf-8")).hexdigest()
+
+    assert canonical_hash != tampered_hash, "Hash collision detected!"
+    print(f"  [+] Canonical Terms Hash: {canonical_hash}")
+    print(f"  [!] Tampered Terms Hash:  {tampered_hash}")
+    print("  [+] Mathematical Proof: Silent modification is immediately exposed because digest diverges.")
+    print("  RESULT: PASSED (Independent direct verification and terms immutability confirmed)")
 
 
 def main():
@@ -429,9 +449,9 @@ def main():
         test_arbitration_alignment()
         test_evidence_integrity()
         test_audit_hash_chain_tamper_detection()
-        test_coral_live_state()
-        test_independent_rpc_and_terms_immutability()
-        test_live_workflow_sqlite_pair_verification()
+        test_coral_institutional_identity_registry()
+        live_res_id = test_live_workflow_sqlite_pair_verification()
+        test_independent_rpc_and_terms_immutability(live_res_id)
 
         print("\n" + "=" * 65)
         print(" ALL 8 VERIFICATION TEST MODULES PASSED SUCCESSFULLY!")
