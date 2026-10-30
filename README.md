@@ -177,16 +177,17 @@ sequenceDiagram
 | **Smart Contract Address** | [`0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC`](https://coralrpc.mstblockchain.com) |
 | **Network & Chain ID** | **MST Coral Testnet** (`54635`) |
 | **RPC Endpoint** | `https://coralrpc.mstblockchain.com` |
-| **Contract Owner** | `0x5E5BB85E3f92389a75e8b555490c99af8B0e8607` |
-| **Relayer (Gas Sponsor)** | `0x5E5BB85E3f92389a75e8b555490c99af8B0e8607` (~99.99 MST) |
+| **Contract Owner / Arbiter** | `0x5E5BB85E3f92389a75e8b555490c99af8B0e8607` |
+| **Relayer (Gas Sponsor)** | `0x5E5BB85E3f92389a75e8b555490c99af8B0e8607` (~99.98 MST) |
 | **Live Reservation ID** | `0xa550bd19b71e87ff0515504c9bf6d2d03e8a428174772650f8305acab0ac7ccf` |
-| **Proposal Creation Tx** | [`0xeb0218194a917781835eb24cf6774b75df9d11e086747dd43ce7c359da5bdafa`](https://coralrpc.mstblockchain.com) |
-| **Proposal Block Number** | **Block `#386800`** |
-| **Provider Acceptance Tx**| [`0xa1f7f1874faaa9e6558015b7603699cfc4a3c14960636e7c08c4ba9911537b8b`](https://coralrpc.mstblockchain.com) |
-| **Acceptance Block Number**| **Block `#386823`** |
-| **Hospital A Identity** | `0x4dB8336edB0af7FeD1311312081689993F80a18B` (Gas Paid: **0 MST**) |
-| **Lab C Identity** | `0xb05049cc2A5a1c28979DEafc82B82749681DA92C` (Gas Paid: **0 MST**) |
-| **Final Confirmed Status** | **`Committed`** (Status Code: `1`) |
+| **1. Proposal Creation Tx** | [`0xeb0218194a917781835eb24cf6774b75df9d11e086747dd43ce7c359da5bdafa`](https://coralrpc.mstblockchain.com) (Block **#386800**) |
+| **2. Provider Acceptance Tx**| [`0xa1f7f1874faaa9e6558015b7603699cfc4a3c14960636e7c08c4ba9911537b8b`](https://coralrpc.mstblockchain.com) (Block **#386823**) |
+| **3. Delivery Fulfillment Tx**| [`0x8d6478f000751395e7afb79c30f182a81980630b8a21dffa4d9b92b81f7dc2f8`](https://coralrpc.mstblockchain.com) (Block **#387308**) |
+| **4. Hospital Dispute Tx** | [`0xd8ef51f82fd5645c7921c8b03f602e194cca08cd24b634608c8fd94f58b9f4c7`](https://coralrpc.mstblockchain.com) (Block **#387406**) |
+| **5. Arbitration Resolution Tx**| [`0x3f9313fd27bd8d42d79b6b99c5b1cd4291bed513733e674f9cdf01ff3a215187`](https://coralrpc.mstblockchain.com) (Block **#387417**) |
+| **Hospital A Identity** | `0x4dB8336edB0af7FeD1311312081689993F80a18B` (Gas Sponsored: **0 MST Spent**) |
+| **Lab C Identity** | `0xb05049cc2A5a1c28979DEafc82B82749681DA92C` (Gas Sponsored: **0 MST Spent**) |
+| **Complete State Lifecycle**| **`Proposed` $\rightarrow$ `Committed` $\rightarrow$ `Fulfilled` $\rightarrow$ `Disputed` $\rightarrow$ `Cancelled` (Resolved)** |
 | **Dispute Window Window** | **`604,800` seconds (7 days)** |
 
 > **EIP-712 vs. ERC-4337 Note**: MEDSWARM utilizes **EIP-712 relayed meta-transactions**, not ERC-4337 account abstraction. Healthcare institutions participate as standard signers without deploying smart accounts or interacting with bundler mempools. The relayer broadcasts signed payloads, guaranteeing zero gas expenses for healthcare facilities.
