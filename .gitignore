@@ -29,6 +29,12 @@ snapshots/
 .env.*
 !.env.example
 
+# Local SQLite databases & process locks
+*.db
+*.sqlite
+*.sqlite3
+.locks/
+
 # OS files
 .DS_Store
 Thumbs.db

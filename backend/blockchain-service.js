@@ -404,6 +404,68 @@ async function cmdAcceptReservation(args) {
   });
 }
 
+async function ensureGasWithLock(targetAddress, client) {
+  const minRequired = parseEther('0.005');
+  const balance = await client.getBalance({ address: targetAddress });
+  if (balance >= minRequired) {
+    return null; // Already sufficient
+  }
+
+  // Acquire atomic filesystem lock to prevent concurrent top-up race conditions
+  const locksDir = path.join(__dirname, '.locks');
+  if (!fs.existsSync(locksDir)) {
+    fs.mkdirSync(locksDir, { recursive: true });
+  }
+  const lockFile = path.join(locksDir, `topup-${targetAddress.toLowerCase()}.lock`);
+
+  const maxWait = 25000;
+  const start = Date.now();
+  let fd = null;
+
+  while (fd === null && Date.now() - start < maxWait) {
+    try {
+      fd = fs.openSync(lockFile, 'wx');
+      fs.writeSync(fd, `pid:${process.pid}\ntime:${Date.now()}`);
+    } catch (err) {
+      if (err.code === 'EEXIST') {
+        try {
+          const stats = fs.statSync(lockFile);
+          if (Date.now() - stats.mtimeMs > 35000) {
+            fs.unlinkSync(lockFile);
+          }
+        } catch {}
+        const waitTill = Date.now() + 250;
+        while (Date.now() < waitTill) {}
+      } else {
+        throw err;
+      }
+    }
+  }
+
+  if (fd === null) {
+    throw new Error(`Timeout acquiring gas top-up lock for ${targetAddress}`);
+  }
+
+  try {
+    // Re-check balance inside critical section (double-check locking pattern)
+    const freshBalance = await client.getBalance({ address: targetAddress });
+    if (freshBalance >= minRequired) {
+      return null; // Already funded by concurrent caller
+    }
+
+    const { account: relayerAccount, client: relayerWallet } = getRelayerClient();
+    const topUpHash = await relayerWallet.sendTransaction({
+      to: targetAddress,
+      value: parseEther('0.01'),
+    });
+    await client.waitForTransactionReceipt({ hash: topUpHash });
+    return topUpHash;
+  } finally {
+    try { fs.closeSync(fd); } catch {}
+    try { fs.unlinkSync(lockFile); } catch {}
+  }
+}
+
 async function cmdFulfillReservation(args) {
   const reservationId = args.reservationId;
   if (!reservationId || !isHex(reservationId) || reservationId.length !== 66) {
@@ -416,20 +478,8 @@ async function cmdFulfillReservation(args) {
   const client = getPublicClient();
   const artifact = loadArtifact();
 
-  // 1. Check provider's native MST gas balance on Coral
-  const balance = await client.getBalance({ address: providerAccount.address });
-  let topUpTxHash = null;
-
-  // Automated gas sponsorship: If balance is below 0.005 MST, relayer tops up 0.01 MST
-  const minRequired = parseEther('0.005');
-  if (balance < minRequired) {
-    const { account: relayerAccount, client: relayerWallet } = getRelayerClient();
-    topUpTxHash = await relayerWallet.sendTransaction({
-      to: providerAccount.address,
-      value: parseEther('0.01'),
-    });
-    await client.waitForTransactionReceipt({ hash: topUpTxHash });
-  }
+  // 1. Concurrency-safe gas top-up check
+  const topUpTxHash = await ensureGasWithLock(providerAccount.address, client);
 
   // 2. Provider signs & submits fulfillReservation directly as msg.sender
   const providerWallet = createWalletClient({
@@ -496,19 +546,8 @@ async function cmdDisputeReservation(args) {
   const client = getPublicClient();
   const artifact = loadArtifact();
 
-  // 1. Check actor's MST gas balance on Coral (idempotent top-up check)
-  const balance = await client.getBalance({ address: actorAccount.address });
-  let topUpTxHash = null;
-
-  const minRequired = parseEther('0.005');
-  if (balance < minRequired) {
-    const { account: relayerAccount, client: relayerWallet } = getRelayerClient();
-    topUpTxHash = await relayerWallet.sendTransaction({
-      to: actorAccount.address,
-      value: parseEther('0.01'),
-    });
-    await client.waitForTransactionReceipt({ hash: topUpTxHash });
-  }
+  // 1. Concurrency-safe gas top-up check for disputing actor
+  const topUpTxHash = await ensureGasWithLock(actorAccount.address, client);
 
   // 2. Actor executes disputeReservation directly as msg.sender
   const actorWallet = createWalletClient({
