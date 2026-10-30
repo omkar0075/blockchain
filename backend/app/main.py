@@ -822,6 +822,11 @@ def get_capacity_status(
     """Query real-time capacity and allocation metrics for a provider directly from Coral Testnet."""
     res = get_onchain_capacity(provider=institution_id, resource_type=resource_type)
     if not res.get("success"):
+        if res.get("interrupted"):
+            raise HTTPException(
+                status_code=503,
+                detail="Blockchain query temporarily interrupted by server reload; please retry.",
+            )
         raise HTTPException(
             status_code=502,
             detail=f"Failed to query on-chain capacity: {res.get('error', 'Unknown RPC error')}",

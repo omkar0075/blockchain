@@ -1,6 +1,7 @@
 import json
 import logging
 import subprocess
+import sys
 from pathlib import Path
 from typing import Any, Optional
 
@@ -9,43 +10,67 @@ logger = logging.getLogger("medway.blockchain")
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 NODE_SCRIPT = BACKEND_DIR / "blockchain-service.js"
 
+# Windows NTSTATUS 0xC000013A (STATUS_CONTROL_C_EXIT) in unsigned and signed 32-bit forms
+INTERRUPT_EXIT_CODES = {3221225786, -1073741510, 0xC000013A, -2}
 
-def _run_node_command(args: list[str], timeout_seconds: int = 45) -> dict[str, Any]:
+
+def _run_node_command(args: list[str], timeout_seconds: int = 45, max_retries: int = 1) -> dict[str, Any]:
     """Execute a command against the Node.js Viem blockchain service via subprocess."""
     full_cmd = ["node", str(NODE_SCRIPT)] + args
-    try:
-        proc = subprocess.run(
-            full_cmd,
-            cwd=str(BACKEND_DIR),
-            capture_output=True,
-            text=True,
-            timeout=timeout_seconds,
-            check=False,
-        )
+    kwargs: dict[str, Any] = {}
+    if sys.platform == "win32":
+        # Detach child process from the parent console to prevent
+        # server hot-reload (WatchFiles/uvicorn) signals from abruptly killing Node.js.
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
 
-        stdout = proc.stdout.strip()
-        stderr = proc.stderr.strip()
+    for attempt in range(max_retries + 1):
+        try:
+            proc = subprocess.run(
+                full_cmd,
+                cwd=str(BACKEND_DIR),
+                capture_output=True,
+                text=True,
+                timeout=timeout_seconds,
+                check=False,
+                **kwargs,
+            )
 
-        if stdout:
-            try:
-                data = json.loads(stdout)
-                return data
-            except json.JSONDecodeError:
-                pass
+            stdout = proc.stdout.strip()
+            stderr = proc.stderr.strip()
 
-        if proc.returncode != 0:
-            error_msg = stderr or stdout or f"Process exited with code {proc.returncode}"
-            logger.error("Blockchain service subprocess error: %s", error_msg)
-            return {"success": False, "error": error_msg}
+            if stdout:
+                try:
+                    data = json.loads(stdout)
+                    return data
+                except json.JSONDecodeError:
+                    pass
 
-        return {"success": False, "error": "Empty or non-JSON output from blockchain service"}
+            # Detect Windows STATUS_CONTROL_C_EXIT caused by uvicorn/watchfiles hot-reload
+            if proc.returncode in INTERRUPT_EXIT_CODES:
+                if attempt < max_retries:
+                    logger.warning("Blockchain subprocess interrupted during server reload; retrying once...")
+                    continue
+                return {
+                    "success": False,
+                    "error": "Blockchain service command interrupted by server reload or shutdown",
+                    "interrupted": True,
+                }
 
-    except subprocess.TimeoutExpired:
-        logger.error("Blockchain service timed out after %s seconds", timeout_seconds)
-        return {"success": False, "error": f"Operation timed out after {timeout_seconds}s"}
-    except Exception as e:
-        logger.exception("Unexpected error executing blockchain service subprocess")
-        return {"success": False, "error": str(e)}
+            if proc.returncode != 0:
+                error_msg = stderr or stdout or f"Process exited with code {proc.returncode}"
+                logger.error("Blockchain service subprocess error: %s", error_msg)
+                return {"success": False, "error": error_msg}
+
+            return {"success": False, "error": "Empty or non-JSON output from blockchain service"}
+
+        except subprocess.TimeoutExpired:
+            logger.error("Blockchain service timed out after %s seconds", timeout_seconds)
+            return {"success": False, "error": f"Operation timed out after {timeout_seconds}s"}
+        except Exception as e:
+            logger.exception("Unexpected error executing blockchain service subprocess")
+            return {"success": False, "error": str(e)}
+
+    return {"success": False, "error": "Unknown blockchain execution failure"}
 
 
 def get_blockchain_status() -> dict[str, Any]:
