@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 import { network } from "hardhat";
-import { pad, stringToHex, zeroAddress } from "viem";
+import { pad, parseEventLogs, stringToHex, zeroAddress } from "viem";
 
 describe("MEDwayReservation", async function () {
   const { viem, networkHelpers } = await network.create();
@@ -1113,6 +1113,290 @@ describe("MEDwayReservation", async function () {
 
       const res = await medway.read.reservations([reservationId]);
       assert.equal(res[5], Status.Committed);
+    });
+
+    it("Should decode receipt logs directly using parseEventLogs and verify event arguments", async function () {
+      const { medway } = await deployFixture();
+      const domain = await getEip712Domain(medway.address);
+
+      const now = BigInt(await networkHelpers.time.latest());
+      const expiresAt = now + 7200n;
+      const deadline = now + 1800n;
+      const nonce = await medway.read.nonces([requester.account.address]);
+
+      const createSig = await requester.signTypedData({
+        domain,
+        types: reservationRequestTypes,
+        primaryType: "ReservationRequest",
+        message: {
+          requester: requester.account.address,
+          provider: provider.account.address,
+          resourceRef: sampleResourceRef,
+          expiresAt,
+          nonce,
+          deadline,
+        },
+      });
+
+      // Submit via relayer
+      const createTxHash = await medway.write.createReservationWithSig(
+        [
+          requester.account.address,
+          provider.account.address,
+          sampleResourceRef,
+          expiresAt,
+          deadline,
+          createSig,
+        ],
+        { account: thirdParty.account }
+      );
+
+      const createReceipt = await publicClient.waitForTransactionReceipt({ hash: createTxHash });
+      const createdLogs = parseEventLogs({
+        abi: medway.abi,
+        logs: createReceipt.logs,
+        eventName: "ReservationCreated",
+      });
+
+      assert.equal(createdLogs.length, 1);
+      const createdEvent = createdLogs[0];
+      const reservationId = createdEvent.args.reservationId;
+
+      assert.equal(createdEvent.args.requester.toLowerCase(), requester.account.address.toLowerCase());
+      assert.equal(createdEvent.args.provider.toLowerCase(), provider.account.address.toLowerCase());
+      assert.equal(createdEvent.args.resourceRef, sampleResourceRef);
+      assert.equal(createdEvent.args.expiresAt, expiresAt);
+
+      // Now Provider accepts via relayer
+      const providerNonce = await medway.read.nonces([provider.account.address]);
+      const acceptDeadline = now + 1800n;
+      const acceptSig = await provider.signTypedData({
+        domain,
+        types: acceptRequestTypes,
+        primaryType: "AcceptRequest",
+        message: {
+          reservationId,
+          provider: provider.account.address,
+          nonce: providerNonce,
+          deadline: acceptDeadline,
+        },
+      });
+
+      const acceptTxHash = await medway.write.acceptReservationWithSig(
+        [reservationId, acceptDeadline, acceptSig],
+        { account: thirdParty.account }
+      );
+
+      const acceptReceipt = await publicClient.waitForTransactionReceipt({ hash: acceptTxHash });
+      const acceptLogs = parseEventLogs({
+        abi: medway.abi,
+        logs: acceptReceipt.logs,
+        eventName: "ReservationCommitted",
+      });
+
+      assert.equal(acceptLogs.length, 1);
+      assert.equal(acceptLogs[0].args.reservationId, reservationId);
+
+      const onChain = await medway.read.reservations([reservationId]);
+      assert.equal(onChain[5], Status.Committed);
+    });
+
+    it("Should allow requester to cancel a gasless proposal before expiry", async function () {
+      const { medway } = await deployFixture();
+      const domain = await getEip712Domain(medway.address);
+
+      const now = BigInt(await networkHelpers.time.latest());
+      const expiresAt = now + 7200n;
+      const deadline = now + 1800n;
+      const nonce = await medway.read.nonces([requester.account.address]);
+
+      const createSig = await requester.signTypedData({
+        domain,
+        types: reservationRequestTypes,
+        primaryType: "ReservationRequest",
+        message: {
+          requester: requester.account.address,
+          provider: provider.account.address,
+          resourceRef: sampleResourceRef,
+          expiresAt,
+          nonce,
+          deadline,
+        },
+      });
+
+      const createTxHash = await medway.write.createReservationWithSig(
+        [
+          requester.account.address,
+          provider.account.address,
+          sampleResourceRef,
+          expiresAt,
+          deadline,
+          createSig,
+        ],
+        { account: thirdParty.account }
+      );
+
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: createTxHash });
+      const createdLogs = parseEventLogs({
+        abi: medway.abi,
+        logs: receipt.logs,
+        eventName: "ReservationCreated",
+      });
+      const reservationId = createdLogs[0].args.reservationId;
+
+      // Requester cancels proposal
+      const cancelTxHash = await medway.write.cancelReservation([reservationId], {
+        account: requester.account,
+      });
+
+      const cancelReceipt = await publicClient.waitForTransactionReceipt({ hash: cancelTxHash });
+      const cancelLogs = parseEventLogs({
+        abi: medway.abi,
+        logs: cancelReceipt.logs,
+        eventName: "ReservationCancelled",
+      });
+
+      assert.equal(cancelLogs.length, 1);
+      assert.equal(cancelLogs[0].args.reservationId, reservationId);
+      assert.equal(cancelLogs[0].args.actor.toLowerCase(), requester.account.address.toLowerCase());
+
+      const res = await medway.read.reservations([reservationId]);
+      assert.equal(res[5], Status.Cancelled);
+    });
+
+    it("Should transition an unaccepted gasless proposal to Expired after deadline passes", async function () {
+      const { medway } = await deployFixture();
+      const domain = await getEip712Domain(medway.address);
+
+      const now = BigInt(await networkHelpers.time.latest());
+      const expiresAt = now + 100n;
+      const deadline = now + 1800n;
+      const nonce = await medway.read.nonces([requester.account.address]);
+
+      const createSig = await requester.signTypedData({
+        domain,
+        types: reservationRequestTypes,
+        primaryType: "ReservationRequest",
+        message: {
+          requester: requester.account.address,
+          provider: provider.account.address,
+          resourceRef: sampleResourceRef,
+          expiresAt,
+          nonce,
+          deadline,
+        },
+      });
+
+      const createTxHash = await medway.write.createReservationWithSig(
+        [
+          requester.account.address,
+          provider.account.address,
+          sampleResourceRef,
+          expiresAt,
+          deadline,
+          createSig,
+        ],
+        { account: thirdParty.account }
+      );
+
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: createTxHash });
+      const createdLogs = parseEventLogs({
+        abi: medway.abi,
+        logs: receipt.logs,
+        eventName: "ReservationCreated",
+      });
+      const reservationId = createdLogs[0].args.reservationId;
+
+      // Advance time past expiresAt
+      await networkHelpers.time.increase(101n);
+
+      // Third party calls expireReservation
+      const expireTxHash = await medway.write.expireReservation([reservationId], {
+        account: thirdParty.account,
+      });
+
+      const expireReceipt = await publicClient.waitForTransactionReceipt({ hash: expireTxHash });
+      const expireLogs = parseEventLogs({
+        abi: medway.abi,
+        logs: expireReceipt.logs,
+        eventName: "ReservationExpired",
+      });
+
+      assert.equal(expireLogs.length, 1);
+      assert.equal(expireLogs[0].args.reservationId, reservationId);
+
+      const res = await medway.read.reservations([reservationId]);
+      assert.equal(res[5], Status.Expired);
+    });
+
+    it("Should reject acceptReservationWithSig if the reservation has already expired", async function () {
+      const { medway } = await deployFixture();
+      const domain = await getEip712Domain(medway.address);
+
+      const now = BigInt(await networkHelpers.time.latest());
+      const expiresAt = now + 100n;
+      const deadline = now + 1800n;
+      const nonce = await medway.read.nonces([requester.account.address]);
+
+      const createSig = await requester.signTypedData({
+        domain,
+        types: reservationRequestTypes,
+        primaryType: "ReservationRequest",
+        message: {
+          requester: requester.account.address,
+          provider: provider.account.address,
+          resourceRef: sampleResourceRef,
+          expiresAt,
+          nonce,
+          deadline,
+        },
+      });
+
+      const createTxHash = await medway.write.createReservationWithSig(
+        [
+          requester.account.address,
+          provider.account.address,
+          sampleResourceRef,
+          expiresAt,
+          deadline,
+          createSig,
+        ],
+        { account: thirdParty.account }
+      );
+
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: createTxHash });
+      const createdLogs = parseEventLogs({
+        abi: medway.abi,
+        logs: receipt.logs,
+        eventName: "ReservationCreated",
+      });
+      const reservationId = createdLogs[0].args.reservationId;
+
+      // Advance time past expiresAt (reservation expiry)
+      await networkHelpers.time.increase(101n);
+
+      const providerNonce = await medway.read.nonces([provider.account.address]);
+      const acceptDeadline = now + 1800n; // signature deadline is still valid, but reservation expiresAt has passed
+      const acceptSig = await provider.signTypedData({
+        domain,
+        types: acceptRequestTypes,
+        primaryType: "AcceptRequest",
+        message: {
+          reservationId,
+          provider: provider.account.address,
+          nonce: providerNonce,
+          deadline: acceptDeadline,
+        },
+      });
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.acceptReservationWithSig(
+          [reservationId, acceptDeadline, acceptSig],
+          { account: thirdParty.account }
+        ),
+        medway,
+        "InvalidExpiry"
+      );
     });
   });
 });

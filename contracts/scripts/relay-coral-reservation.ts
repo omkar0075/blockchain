@@ -1,6 +1,6 @@
 import { network } from "hardhat";
-import { getAddress, pad, stringToHex } from "viem";
-import { generatePrivateKey, privateKeyToAccount } from "viem/accounts";
+import { pad, parseEventLogs, stringToHex } from "viem";
+import { getInstitutionKeys } from "./load-env.js";
 
 async function main() {
   console.log("Connecting to network: coral...");
@@ -22,21 +22,21 @@ async function main() {
   console.log(`Loading upgraded MEDwayReservation at: ${contractAddress}`);
   const reservation = await viem.getContractAt("MEDwayReservation", contractAddress);
 
-  // Simulated Hospital A: creates an off-chain keypair with 0 MST tokens
-  const hospitalKey = generatePrivateKey();
-  const hospitalA = privateKeyToAccount(hospitalKey);
+  // Load persistent, secure institution identities from environment
+  const { hospitalA, labC } = getInstitutionKeys();
   const hospitalBalance = await publicClient.getBalance({ address: hospitalA.address });
-
-  // Simulated Provider Hospital B (e.g., Diagnostic Lab C) with checksum normalization
-  const providerAddress = getAddress("0x70997970c51812e33987251372ecdbc2b3f3bb6e");
+  const labBalance = await publicClient.getBalance({ address: labC.address });
+  const relayerBalance = await publicClient.getBalance({ address: relayer.account.address });
 
   console.log("\n========================================================");
   console.log(" LIVE CORAL TESTNET SPONSORED RESERVATION");
   console.log("========================================================");
   console.log(` Requester (Hospital A):    ${hospitalA.address}`);
   console.log(` Hospital A MST Balance:    ${hospitalBalance} wei (0 MST - Gasless!)`);
-  console.log(` Provider  (Hospital B):    ${providerAddress}`);
+  console.log(` Provider  (Lab C):         ${labC.address}`);
+  console.log(` Lab C MST Balance:         ${labBalance} wei (0 MST - Gasless!)`);
   console.log(` Relayer / Gas Sponsor:     ${relayer.account.address}`);
+  console.log(` Relayer MST Balance:       ${relayerBalance} wei`);
   console.log("========================================================\n");
 
   // Step 1: Hospital A signs EIP-712 Typed Data off-chain
@@ -65,7 +65,7 @@ async function main() {
   const expiresAt = latestBlock.timestamp + 7200n; // 2 hours
   const deadline = latestBlock.timestamp + 1800n;  // 30 min signature validity
   const nonce = await reservation.read.nonces([hospitalA.address]);
-  const resourceRef = pad(stringToHex("slot-mri-coral-live-001"), { size: 32 });
+  const resourceRef = pad(stringToHex(`slot-mri-coral-${Date.now()}`), { size: 32 });
 
   const signature = await hospitalA.signTypedData({
     domain,
@@ -73,7 +73,7 @@ async function main() {
     primaryType: "ReservationRequest",
     message: {
       requester: hospitalA.address,
-      provider: providerAddress,
+      provider: labC.address,
       resourceRef,
       expiresAt,
       nonce,
@@ -89,7 +89,7 @@ async function main() {
   const txHash = await reservation.write.createReservationWithSig(
     [
       hospitalA.address,
-      providerAddress,
+      labC.address,
       resourceRef,
       expiresAt,
       deadline,
@@ -103,16 +103,21 @@ async function main() {
   const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
   console.log(`  Confirmed in block:#${receipt.blockNumber}`);
 
-  // Retrieve reservation ID from event logs
-  const events = await publicClient.getContractEvents({
-    address: contractAddress,
+  // Retrieve reservation ID directly from receipt logs with verified decoding
+  const createdLogs = parseEventLogs({
     abi: reservation.abi,
+    logs: receipt.logs,
     eventName: "ReservationCreated",
-    fromBlock: receipt.blockNumber,
-    strict: true,
   });
 
-  const reservationId = (events[0] as any).args.reservationId as `0x${string}`;
+  if (createdLogs.length === 0) {
+    throw new Error("No ReservationCreated event emitted in receipt logs");
+  }
+
+  const createdEvent = createdLogs[0];
+  const reservationId = createdEvent.args.reservationId;
+  const decodedRequester = createdEvent.args.requester;
+  const decodedProvider = createdEvent.args.provider;
 
   // Step 3: Verify on-chain storage on Coral
   console.log("\nStep 3: Querying confirmed on-chain commitment record from Coral...");
@@ -124,18 +129,25 @@ async function main() {
   console.log(` Reservation ID:     ${reservationId}`);
   console.log(` Stored Requester:   ${onChainData[2]}`);
   console.log(` Expected Hospital:  ${hospitalA.address}`);
+  console.log(` Decoded Log Req:    ${decodedRequester}`);
   console.log(` Stored Provider:    ${onChainData[3]}`);
+  console.log(` Expected Provider:  ${labC.address}`);
+  console.log(` Decoded Log Prov:   ${decodedProvider}`);
   console.log(` Relayer (Sponsor):  ${relayer.account.address}`);
   console.log(` Block Number:       #${receipt.blockNumber}`);
   console.log(` Transaction Hash:   ${txHash}`);
   console.log("--------------------------------------------------------");
 
-  const identityPreserved = onChainData[2].toLowerCase() === hospitalA.address.toLowerCase();
-  const relayerExcludedFromIdentity = onChainData[2].toLowerCase() !== relayer.account.address.toLowerCase();
+  const identityPreserved =
+    onChainData[2].toLowerCase() === hospitalA.address.toLowerCase() &&
+    decodedRequester.toLowerCase() === hospitalA.address.toLowerCase();
+  const relayerExcludedFromIdentity =
+    onChainData[2].toLowerCase() !== relayer.account.address.toLowerCase();
 
   if (identityPreserved && relayerExcludedFromIdentity) {
     console.log(" IDENTITY INTEGRITY: PASSED (Hospital A is the true requester)");
     console.log(" GAS SPONSORSHIP:    PASSED (Hospital A paid 0 gas; relayer sponsored)");
+    console.log(" EVENT DECODING:     PASSED (Direct receipt log decoded and verified)");
   } else {
     throw new Error("Identity verification failed on-chain!");
   }
@@ -146,4 +158,3 @@ main().catch((error) => {
   console.error("\nSponsored transaction failed:", error?.message || error);
   process.exitCode = 1;
 });
-

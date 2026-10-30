@@ -1,6 +1,6 @@
 import { network } from "hardhat";
-import { keccak256, pad, stringToHex, toHex } from "viem";
-import { privateKeyToAccount } from "viem/accounts";
+import { pad, parseEventLogs, stringToHex } from "viem";
+import { getInstitutionKeys } from "./load-env.js";
 
 const STATUS_NAMES = [
   "Proposed",
@@ -26,16 +26,10 @@ async function main() {
   // 1. Relayer account (sponsors gas on Coral Testnet)
   const relayer = walletClients[0];
 
-  // 2. Persistent, stable institution identities
-  // Derived deterministically so institution addresses remain stable across runs,
-  // or overridden via environment variables if custom keys are provided.
-  const hospitalAKey = (process.env.HOSPITAL_A_PRIVATE_KEY ||
-    keccak256(toHex("MEDWAY_INSTITUTION_HOSPITAL_A_STABLE_IDENTITY_SEED"))) as `0x${string}`;
-  const labCKey = (process.env.LAB_C_PRIVATE_KEY ||
-    keccak256(toHex("MEDWAY_INSTITUTION_LAB_C_STABLE_IDENTITY_SEED"))) as `0x${string}`;
-
-  const hospitalA = privateKeyToAccount(hospitalAKey);
-  const labC = privateKeyToAccount(labCKey);
+  // 2. Persistent, cryptographically secure institution identities
+  // Loaded from environment variables (contracts/.env or backend/.env)
+  // Completely isolated from relayer account and free from insecure public seed derivation.
+  const { hospitalA, labC } = getInstitutionKeys();
 
   const contractAddress = (process.env.CONTRACT_ADDRESS ||
     "0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC") as `0x${string}`;
@@ -127,16 +121,43 @@ async function main() {
   const createReceipt = await publicClient.waitForTransactionReceipt({ hash: createTxHash });
   console.log(`  Confirmed in block:#${createReceipt.blockNumber}`);
 
-  const createdEvents = await publicClient.getContractEvents({
-    address: contractAddress,
+  // Hardened Event Decoding: decode directly from createReceipt.logs
+  const createdLogs = parseEventLogs({
     abi: reservation.abi,
+    logs: createReceipt.logs,
     eventName: "ReservationCreated",
-    fromBlock: createReceipt.blockNumber,
-    strict: true,
   });
 
-  const reservationId = (createdEvents[0] as any).args.reservationId as `0x${string}`;
+  if (createdLogs.length === 0) {
+    throw new Error("No ReservationCreated event found in transaction receipt logs!");
+  }
+
+  const createdEvent = createdLogs[0];
+  const reservationId = createdEvent.args.reservationId;
+  const eventRequester = createdEvent.args.requester;
+  const eventProvider = createdEvent.args.provider;
+  const eventResourceRef = createdEvent.args.resourceRef;
+
   console.log(`  Created Reservation ID: ${reservationId}`);
+  console.log(`  Decoded Event Requester:${eventRequester}`);
+  console.log(`  Decoded Event Provider: ${eventProvider}`);
+
+  // Strict verification of event arguments against expected identities
+  if (eventRequester.toLowerCase() !== hospitalA.address.toLowerCase()) {
+    throw new Error(
+      `Event Requester mismatch! Expected: ${hospitalA.address}, Got: ${eventRequester}`
+    );
+  }
+  if (eventProvider.toLowerCase() !== labC.address.toLowerCase()) {
+    throw new Error(
+      `Event Provider mismatch! Expected: ${labC.address}, Got: ${eventProvider}`
+    );
+  }
+  if (eventResourceRef !== resourceRef) {
+    throw new Error(
+      `Event ResourceRef mismatch! Expected: ${resourceRef}, Got: ${eventResourceRef}`
+    );
+  }
 
   // Verify Phase 1 State
   const phase1Data = await reservation.read.reservations([reservationId]);
@@ -193,6 +214,25 @@ async function main() {
   const acceptReceipt = await publicClient.waitForTransactionReceipt({ hash: acceptTxHash });
   console.log(`  Confirmed in block:#${acceptReceipt.blockNumber}`);
 
+  // Hardened Event Decoding: decode directly from acceptReceipt.logs
+  const acceptLogs = parseEventLogs({
+    abi: reservation.abi,
+    logs: acceptReceipt.logs,
+    eventName: "ReservationCommitted",
+  });
+
+  if (acceptLogs.length === 0) {
+    throw new Error("No ReservationCommitted event found in accept transaction receipt logs!");
+  }
+
+  const committedReservationId = acceptLogs[0].args.reservationId;
+  if (committedReservationId.toLowerCase() !== reservationId.toLowerCase()) {
+    throw new Error(
+      `Committed ID mismatch! Expected: ${reservationId}, Got: ${committedReservationId}`
+    );
+  }
+  console.log(`  Decoded Event Committed ID: ${committedReservationId}`);
+
   // -------------------------------------------------------------------
   // PHASE 3: On-Chain Verification
   // -------------------------------------------------------------------
@@ -218,7 +258,8 @@ async function main() {
   console.log("========================================================");
   console.log(" - Hospital A created the reservation proposal with 0 gas.");
   console.log(" - Lab C accepted the commitment with 0 gas.");
-  console.log(" - Both institutions preserved cryptographically verified identities.");
+  console.log(" - Both institutions used secure, persistent private keys from environment.");
+  console.log(" - Receipt logs were directly decoded and validated for both events.");
   console.log(" - Relayer paid all blockchain network fees.");
   console.log("========================================================\n");
 }
