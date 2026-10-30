@@ -71,11 +71,22 @@ def init_db() -> None:
                 relayer_topup_tx TEXT,
                 note TEXT,
                 message TEXT,
+                terms_hash TEXT,
+                canonical_terms TEXT,
                 created_at REAL NOT NULL,
                 updated_at REAL NOT NULL
             )
             """
         )
+
+        # Migration for existing databases without recreating or deleting records
+        existing_cols = {
+            row["name"] for row in cursor.execute("PRAGMA table_info(commitments)").fetchall()
+        }
+        if "terms_hash" not in existing_cols:
+            cursor.execute("ALTER TABLE commitments ADD COLUMN terms_hash TEXT")
+        if "canonical_terms" not in existing_cols:
+            cursor.execute("ALTER TABLE commitments ADD COLUMN canonical_terms TEXT")
 
         # 3. Evidence Vault Table (stores off-chain raw clinical/operational documents)
         cursor.execute(
@@ -161,6 +172,12 @@ def save_commitment(commitment: dict[str, Any]) -> None:
     created_at = commitment.get("created_at") or now
     commitment["created_at"] = created_at
 
+    canonical_terms = commitment.get("canonical_terms")
+    if isinstance(canonical_terms, (dict, list)):
+        canonical_terms_str = json.dumps(canonical_terms, sort_keys=True, separators=(",", ":"))
+    else:
+        canonical_terms_str = canonical_terms
+
     with get_connection() as conn:
         conn.execute(
             """
@@ -172,10 +189,10 @@ def save_commitment(commitment: dict[str, Any]) -> None:
                 dispute_evidence, disputed_by, dispute_reason, dispute_tx_hash,
                 dispute_block, resolution_notes, resolution_evidence,
                 resolution_tx_hash, resolution_block, relayer_topup_tx,
-                note, message, created_at, updated_at
+                note, message, terms_hash, canonical_terms, created_at, updated_at
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             """,
             (
@@ -206,10 +223,22 @@ def save_commitment(commitment: dict[str, Any]) -> None:
                 commitment.get("relayer_topup_tx"),
                 commitment.get("note"),
                 commitment.get("message"),
+                commitment.get("terms_hash"),
+                canonical_terms_str,
                 created_at,
                 now,
             ),
         )
+
+
+def _format_commitment_row(row: sqlite3.Row) -> dict[str, Any]:
+    c = dict(row)
+    if c.get("canonical_terms") and isinstance(c["canonical_terms"], str):
+        try:
+            c["canonical_terms"] = json.loads(c["canonical_terms"])
+        except Exception:
+            pass
+    return c
 
 
 def get_commitment(commitment_id: str) -> Optional[dict[str, Any]]:
@@ -219,7 +248,7 @@ def get_commitment(commitment_id: str) -> Optional[dict[str, Any]]:
             (commitment_id,),
         ).fetchone()
         if row:
-            return dict(row)
+            return _format_commitment_row(row)
     return None
 
 
@@ -228,7 +257,7 @@ def list_commitments() -> list[dict[str, Any]]:
         rows = conn.execute(
             "SELECT * FROM commitments ORDER BY created_at DESC"
         ).fetchall()
-        return [dict(r) for r in rows]
+        return [_format_commitment_row(r) for r in rows]
 
 
 def store_evidence(

@@ -54,6 +54,8 @@ def test_sqlite_persistence():
         "tx_hash": "0xabc123",
         "block_number": 387900,
         "onchain_status": "Committed",
+        "terms_hash": "0x03cf150c8c1358b8e1f2d2b74446b5955e5e596943ca62f722cb8d969dcb3d12",
+        "canonical_terms": {"proposal_id": "prop-test-001", "quantity": 3},
     }
     save_commitment(test_commitment)
     print(f"  [+] Saved commitment '{test_id}' to SQLite DB.")
@@ -67,8 +69,13 @@ def test_sqlite_persistence():
         assert row is not None, "Failed to recover commitment from fresh connection!"
         assert row["status"] == "committed"
         assert row["provider_id"] == "lab-c"
+        assert row["terms_hash"] == "0x03cf150c8c1358b8e1f2d2b74446b5955e5e596943ca62f722cb8d969dcb3d12"
+        recovered = get_commitment(test_id)
+        assert recovered is not None
+        assert recovered.get("canonical_terms", {}).get("quantity") == 3
         print(f"  [+] Successfully recovered commitment from fresh DB connection.")
         print(f"  [+] Status: {row['status']} | Provider: {row['provider_id']} | Block: #{row['block_number']}")
+        print(f"  [+] Terms Hash: {row['terms_hash'][:16]}... | Canonical Terms Restored: quantity={recovered['canonical_terms']['quantity']}")
     print("  RESULT: PASSED (Data survives across connections)")
 
 
