@@ -1,7 +1,8 @@
 import logging
-from .blockchain import get_onchain_capacity
-from .data import INSTITUTIONS
-from .models import ResourceRequest, AllocationOffer
+from .base import BaseAgent
+from ..blockchain import get_onchain_capacity
+from ..data import INSTITUTIONS
+from ..models import ResourceRequest, AllocationOffer
 
 logger = logging.getLogger("medway.agents")
 
@@ -76,6 +77,7 @@ def discover_and_verify(request: ResourceRequest) -> list[AllocationOffer]:
         )
 
     return offers
+
 
 def choose_offer(request: ResourceRequest, offers: list[AllocationOffer]) -> AllocationOffer | None:
     feasible = [

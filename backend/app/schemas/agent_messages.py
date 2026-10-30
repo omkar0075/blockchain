@@ -86,3 +86,4 @@ class AgentResult(BaseModel):
         if not stripped:
             raise ValueError("Agent name cannot be empty or whitespace only")
         return stripped
+
