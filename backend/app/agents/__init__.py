@@ -26,6 +26,12 @@ from .monitoring_agent import (
     MonitoringAgent,
     ReservationLifecycleState,
 )
+from .recovery_agent import (
+    FailureClassification,
+    RecoveryAgent,
+    RecoveryOutcome,
+    RecoveryStrategy,
+)
 from .orchestrator import (
     WorkflowOrchestrator,
     WorkflowRecord,
@@ -148,6 +154,10 @@ __all__ = [
     "VerificationAgent",
     "BlockchainExecutionAgent",
     "MonitoringAgent",
+    "RecoveryAgent",
+    "FailureClassification",
+    "RecoveryStrategy",
+    "RecoveryOutcome",
     "BlockchainEvent",
     "MonitoredEntity",
     "ReservationLifecycleState",

@@ -472,3 +472,4 @@ def test_preserves_workflow_and_transaction_history():
         assert res_id in agent._workflow_mappings[wf_id]
 
     asyncio.run(run())
+
