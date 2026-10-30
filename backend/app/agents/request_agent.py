@@ -151,9 +151,9 @@ class DeterministicRequestParser(BaseRequestParser):
         urgency: UrgencyLevel = UrgencyLevel.ROUTINE
         if re.search(r"\b(critical|stat|emergency|life[-\s]?threatening|code\s*blue)\b", lowered):
             urgency = UrgencyLevel.CRITICAL
-        elif re.search(r"\b(urgent|asap|priority|immediate|fast)\b", lowered):
+        elif re.search(r"\b(urgent(?:ly)?|asap|priority|immediate(?:ly)?|fast|high\s+urgency)\b", lowered):
             urgency = UrgencyLevel.URGENT
-        elif re.search(r"\b(routine|standard|elective|normal|scheduled)\b", lowered):
+        elif re.search(r"\b(routine|standard|elective|normal|scheduled|low\s+urgency)\b", lowered):
             urgency = UrgencyLevel.ROUTINE
 
         # 6. Extract City Location (excluding boundary words like "within", "hours", etc.)
@@ -235,8 +235,11 @@ class RequestAgent(BaseAgent):
 
         requester_id = payload.get("requester_institution_id") or "hospital-a"
 
-        # 1. Parse via Decoupled Parser
-        parsed = self.parser.parse(str(raw_text), requester_institution_id=requester_id)
+        # 1. Parse via Decoupled Parser (async or sync)
+        if hasattr(self.parser, "parse_async"):
+            parsed = await self.parser.parse_async(str(raw_text), requester_institution_id=requester_id)
+        else:
+            parsed = self.parser.parse(str(raw_text), requester_institution_id=requester_id)
 
         # 2. Check for Ambiguity
         if parsed.get("ambiguous"):

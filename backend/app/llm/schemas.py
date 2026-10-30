@@ -97,3 +97,4 @@ class RecoveryAdviceOutput(BaseModel):
     suggested_recovery_path: str = Field(..., description="Recommended remediation strategy")
     alternative_provider_ids: list[str] = Field(default_factory=list, description="Candidate providers to evaluate")
     is_recoverable: bool = Field(default=True, description="Whether automatic recovery should be attempted")
+

@@ -153,3 +153,4 @@ def sanitize_log_message(msg: str, api_keys: Optional[list[str]] = None) -> str:
         sanitized = pattern.sub("[REDACTED]", sanitized)
 
     return sanitized
+

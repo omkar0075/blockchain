@@ -143,3 +143,4 @@ class LLMClient:
         # Validate output length and absence of authority overrides
         validate_output(response.raw_text)
         return response.raw_text
+

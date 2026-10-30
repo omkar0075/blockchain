@@ -13,6 +13,7 @@ from .provider import (
     OpenAILikeLLMProvider,
     get_llm_provider,
 )
+from .request_interpreter import LLMRequestParser
 from .schemas import (
     LLMError,
     LLMProviderError,
@@ -41,7 +42,9 @@ __all__ = [
     "RequestInterpretationOutput",
     "NegotiationAdviceOutput",
     "RecoveryAdviceOutput",
+    "LLMRequestParser",
     "validate_input",
     "validate_output",
     "sanitize_log_message",
 ]
+
