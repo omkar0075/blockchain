@@ -7,7 +7,7 @@ from typing import Any, Optional
 
 DB_DIR = Path(__file__).resolve().parent.parent / "data"
 DB_DIR.mkdir(parents=True, exist_ok=True)
-DB_PATH = DB_DIR / "medswarm.db"
+DB_PATH = DB_DIR / "medway.db"
 
 
 def get_connection() -> sqlite3.Connection:

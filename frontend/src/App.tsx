@@ -94,9 +94,9 @@ interface EvidenceRecord {
 }
 
 const ACTORS = [
-  { id: 'hospital-a', name: 'City Hospital A', role: 'requester', key: 'medswarm-key-hosp-a-sec91', icon: '🏥' },
-  { id: 'lab-c', name: 'Central Diagnostic Lab C', role: 'provider', key: 'medswarm-key-lab-c-sec73', icon: '🔬' },
-  { id: 'consortium-arbitrator', name: 'Consortium Arbitration Board', role: 'arbitrator', key: 'medswarm-key-arbitrator-sec05', icon: '⚖️' },
+  { id: 'hospital-a', name: 'City Hospital A', role: 'requester', key: 'medway-key-hosp-a-sec91', icon: '🏥' },
+  { id: 'lab-c', name: 'Central Diagnostic Lab C', role: 'provider', key: 'medway-key-lab-c-sec73', icon: '🔬' },
+  { id: 'consortium-arbitrator', name: 'Consortium Arbitration Board', role: 'arbitrator', key: 'medway-key-arbitrator-sec05', icon: '⚖️' },
 ]
 
 export default function App() {
@@ -345,7 +345,7 @@ export default function App() {
       <header className="topbar">
         <div>
           <div className="eyebrow">AUTONOMOUS HEALTHCARE RESOURCE COORDINATION</div>
-          <h1>MEDSWARM</h1>
+          <h1>MEDway</h1>
           <p>Multi-Agent Capacity Discovery · EIP-712 Relayed Meta-Transactions · MST Coral Testnet</p>
         </div>
         <div className="topbar-right">

@@ -92,7 +92,7 @@ def test_authentication_and_rbac():
     print("  Subtest 2.2: Valid API key credentials...")
     actor = authenticate_actor(
         x_actor_id="hospital-a",
-        x_api_key="medswarm-key-hosp-a-sec91",
+        x_api_key="medway-key-hosp-a-sec91",
         default_actor_id="hospital-a",
     )
     assert actor.id == "hospital-a"
@@ -250,7 +250,7 @@ def test_coral_live_state():
 
 def main():
     print("\n" + "=" * 65)
-    print(" MEDSWARM COMPREHENSIVE SYSTEM VERIFICATION SUITE")
+    print(" MEDway COMPREHENSIVE SYSTEM VERIFICATION SUITE")
     print("=" * 65)
 
     try:

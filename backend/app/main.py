@@ -46,7 +46,7 @@ from .models import (
 )
 
 app = FastAPI(
-    title="MEDSWARM API",
+    title="MEDway API",
     description="Autonomous healthcare resource coordination with Coral Testnet on-chain verification and tamper-evident audit trails.",
     version="0.5.0",
 )

@@ -4,7 +4,7 @@ import subprocess
 from pathlib import Path
 from typing import Any, Optional
 
-logger = logging.getLogger("medswarm.blockchain")
+logger = logging.getLogger("medway.blockchain")
 
 BACKEND_DIR = Path(__file__).resolve().parent.parent
 NODE_SCRIPT = BACKEND_DIR / "blockchain-service.js"

@@ -40,9 +40,9 @@ In regional healthcare ecosystems, critical diagnostic and surgical facilities�
 
 ---
 
-## 💡 The MEDSWARM Solution
+## 💡 The MEDway Solution
 
-**MEDSWARM (MEDway)** is an autonomous healthcare resource coordination platform combining **multi-agent capacity discovery** with **dual-sided EIP-712 relayed meta-transactions on the MST Coral Testnet**:
+**MEDway** is an autonomous healthcare resource coordination platform combining **multi-agent capacity discovery** with **dual-sided EIP-712 relayed meta-transactions on the MST Coral Testnet**:
 
 * **Off-Chain Patient Privacy**: Zero protected health information (PHI) touches the blockchain. Only cryptographic resource references (`resourceRef = keccak256(...)`) and institution addresses are committed on-chain.
 * **100% Gasless for Healthcare Institutions**: Hospitals and diagnostic labs sign off-chain EIP-712 authorization payloads using standard private keys with **0 MST native token balance**. A dedicated application relayer submits transactions and pays all gas fees.
@@ -55,7 +55,7 @@ In regional healthcare ecosystems, critical diagnostic and surgical facilities�
 
 ```
 ┌─────────────────────────────────────────────────────────────────────────────┐
-│                             MEDSWARM CORE PILLARS                           │
+│                              MEDWAY CORE PILLARS                            │
 ├───────────────────────┬──────────────────────────┬──────────────────────────┤
 │   ZERO-PII PRIVACY    │    EIP-712 META-TX       │   HUMAN-IN-THE-LOOP      │
 │  Patient records stay │ Hospitals pay 0 gas.     │ Agents recommend; human  │
@@ -84,7 +84,7 @@ In regional healthcare ecosystems, critical diagnostic and surgical facilities�
 
 ## 📐 System Architecture
 
-MEDSWARM organizes coordination into a clean four-tier architecture:
+MEDway organizes coordination into a clean four-tier architecture:
 
 ```mermaid
 flowchart TB
@@ -190,7 +190,7 @@ sequenceDiagram
 | **Complete State Lifecycle**| **`Proposed` $\rightarrow$ `Committed` $\rightarrow$ `Fulfilled` $\rightarrow$ `Disputed` $\rightarrow$ `Cancelled` (Resolved)** |
 | **Dispute Window Window** | **`604,800` seconds (7 days)** |
 
-> **EIP-712 vs. ERC-4337 Note**: MEDSWARM utilizes **EIP-712 relayed meta-transactions**, not ERC-4337 account abstraction. Healthcare institutions participate as standard signers without deploying smart accounts or interacting with bundler mempools. The relayer broadcasts signed payloads, guaranteeing zero gas expenses for healthcare facilities.
+> **EIP-712 vs. ERC-4337 Note**: MEDway utilizes **EIP-712 relayed meta-transactions**, not ERC-4337 account abstraction. Healthcare institutions participate as standard signers without deploying smart accounts or interacting with bundler mempools. The relayer broadcasts signed payloads, guaranteeing zero gas expenses for healthcare facilities.
 
 ---
 
@@ -390,7 +390,7 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 ## 🧪 Testing & Verification Suite
 
-MEDSWARM includes a **62-test comprehensive test suite** covering unit, fuzzing, authorization, failure recovery, and gasless EIP-712 meta-transactions:
+MEDway includes a **62-test comprehensive test suite** covering unit, fuzzing, authorization, failure recovery, and gasless EIP-712 meta-transactions:
 
 ```bash
 cd contracts

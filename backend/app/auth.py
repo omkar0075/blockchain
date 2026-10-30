@@ -3,7 +3,7 @@ from typing import Optional
 from fastapi import Header, HTTPException, status
 from pydantic import BaseModel
 
-logger = logging.getLogger("medswarm.auth")
+logger = logging.getLogger("medway.auth")
 
 
 class ActorIdentity(BaseModel):
@@ -21,28 +21,28 @@ REGISTERED_ACTORS: dict[str, ActorIdentity] = {
         name="City Hospital A",
         role="requester",
         address="0x4dB8336edB0af7FeD1311312081689993F80a18B",
-        api_key="medswarm-key-hosp-a-sec91",
+        api_key="medway-key-hosp-a-sec91",
     ),
     "hospital-b": ActorIdentity(
         id="hospital-b",
         name="Community Hospital B",
         role="requester",
         address="0x70997970c51812e33987251372ecdbc2b3f3bb6e",
-        api_key="medswarm-key-hosp-b-sec82",
+        api_key="medway-key-hosp-b-sec82",
     ),
     "lab-c": ActorIdentity(
         id="lab-c",
         name="Central Diagnostic Lab C",
         role="provider",
         address="0xb05049cc2A5a1c28979DEafc82B82749681DA92C",
-        api_key="medswarm-key-lab-c-sec73",
+        api_key="medway-key-lab-c-sec73",
     ),
     "consortium-arbitrator": ActorIdentity(
         id="consortium-arbitrator",
         name="Consortium Arbitration Board",
         role="arbitrator",
         address="0x5E5BB85E3f92389a75e8b555490c99af8B0e8607",  # Deployed Contract Owner
-        api_key="medswarm-key-arbitrator-sec05",
+        api_key="medway-key-arbitrator-sec05",
     ),
 }
 
