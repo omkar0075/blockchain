@@ -29,6 +29,8 @@ from app.db import (
     verify_audit_trail_integrity,
 )
 from fastapi import HTTPException
+from app.models import ResourceRequest, AuthorizationRequest
+from app.main import create_request, authorize_proposal
 
 
 def print_header(title: str):
@@ -315,6 +317,107 @@ def test_independent_rpc_and_terms_immutability():
     print("  RESULT: PASSED (Independent direct verification and terms immutability confirmed)")
 
 
+def test_live_workflow_sqlite_pair_verification():
+    print_header("TEST 8: Live Backend Workflow -> SQLite -> Direct Coral Verification")
+    import urllib.request
+
+    # 1. Trigger live backend autonomous request and matchmaking
+    req = ResourceRequest(
+        requesting_institution_id="hospital-a",
+        resource_type="diagnostic_slot",
+        quantity=3,
+        urgency="urgent",
+        required_by_hours=12,
+    )
+    proposal = create_request(
+        request=req,
+        x_actor_id="hospital-a",
+        x_api_key="medway-key-hosp-a-sec91",
+    )
+    proposal_id = proposal["proposal_id"] if isinstance(proposal, dict) else proposal.proposal_id
+    selected_provider = proposal["selected_provider_id"] if isinstance(proposal, dict) else proposal.selected_provider_id
+    assert proposal_id is not None, "Proposal ID must be generated"
+    assert selected_provider == "lab-c"
+    print(f"  [+] Live Multi-Agent Match: Hospital A -> Lab C (Proposal: {proposal_id[:8]}...)")
+
+    # 2. Institutional Coordinator Authorizes Proposal
+    auth_req = AuthorizationRequest(approved_by="Dr. Marcus Coordinator", approved=True)
+    auth_result = authorize_proposal(
+        proposal_id=proposal_id,
+        approval=auth_req,
+        x_actor_id="hospital-a",
+        x_api_key="medway-key-hosp-a-sec91",
+    )
+    commitment_data = auth_result["commitment"]
+    commitment_id = commitment_data["commitment_id"]
+    onchain_res_id = commitment_data.get("onchain_reservation_id")
+    assert onchain_res_id is not None, "On-chain reservation ID must exist on Coral Testnet"
+    print(f"  [+] Live Commitment Created: ID: {commitment_id[:8]}... | On-Chain: {onchain_res_id[:10]}...")
+
+    # 3. Read directly from SQLite persistence
+    recovered_commitment = get_commitment(commitment_id)
+    assert recovered_commitment is not None, "Commitment must be in SQLite"
+    sqlite_terms = recovered_commitment.get("canonical_terms")
+    sqlite_hash = recovered_commitment.get("terms_hash")
+    sqlite_onchain_id = recovered_commitment.get("onchain_reservation_id")
+
+    assert sqlite_terms is not None, "SQLite must persist canonical_terms"
+    assert sqlite_hash is not None, "SQLite must persist terms_hash"
+    assert sqlite_onchain_id == onchain_res_id, "SQLite reservation ID must match Coral reservation ID"
+    print(f"  [+] SQLite Recovery: Found canonical_terms (quantity={sqlite_terms.get('quantity')}) and terms_hash ({sqlite_hash[:16]}...)")
+
+    # 4. Independent Zero-Backend Verification against Coral Testnet RPC
+    rpc_url = "https://coralrpc.mstblockchain.com"
+    contract_addr = "0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC"
+    selector = "0xa1b416f9"  # reservations(bytes32)
+
+    payload = json.dumps({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "eth_call",
+        "params": [
+            {"to": contract_addr, "data": selector + sqlite_onchain_id[2:]},
+            "latest"
+        ]
+    }).encode("utf-8")
+
+    rpc_req = urllib.request.Request(rpc_url, data=payload, headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(rpc_req, timeout=20) as resp:
+        rpc_json = json.loads(resp.read().decode("utf-8"))
+
+    raw_hex = rpc_json.get("result", "")
+    assert raw_hex.startswith("0x") and len(raw_hex) >= 640, "Invalid Coral RPC response"
+    hex_data = raw_hex[2:]
+    words = [hex_data[i:i+64] for i in range(0, len(hex_data), 64)]
+    onchain_resource_ref = "0x" + words[1]
+    onchain_requester = "0x" + words[2][24:]
+    onchain_provider = "0x" + words[3][24:]
+
+    # 5. Cryptographic Attestation Check on the Exact Pair
+    recomputed_sha256 = "0x" + hashlib.sha256(
+        json.dumps(sqlite_terms, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+
+    assert onchain_resource_ref.lower() == sqlite_hash.lower(), "On-chain resourceRef must match SQLite terms_hash"
+    assert onchain_resource_ref.lower() == recomputed_sha256.lower(), "On-chain resourceRef must match recomputed terms hash"
+    print(f"  [+] Direct Coral Node Verification:")
+    print(f"      - On-Chain Requester:   {onchain_requester}")
+    print(f"      - On-Chain Provider:    {onchain_provider}")
+    print(f"      - On-Chain resourceRef: {onchain_resource_ref}")
+    print(f"      - Recomputed SHA-256:   {recomputed_sha256}")
+    print(f"      - Attestation Result:   100% MATHEMATICAL MATCH")
+
+    # 6. Tamper Detection on the Live Pair
+    tampered_terms = dict(sqlite_terms)
+    tampered_terms["quantity"] = 99
+    tampered_sha256 = "0x" + hashlib.sha256(
+        json.dumps(tampered_terms, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    assert tampered_sha256.lower() != onchain_resource_ref.lower(), "Tampering must cause hash divergence"
+    print(f"  [+] Tamper Detection on Live Pair: Quantity changed 3 -> 99 diverges hash ({tampered_sha256[:16]}...)")
+    print("  RESULT: PASSED (Exact SQLite commitment verified against Coral Testnet storage)")
+
+
 def main():
     print("\n" + "=" * 65)
     print(" MEDway COMPREHENSIVE SYSTEM VERIFICATION SUITE")
@@ -328,9 +431,10 @@ def main():
         test_audit_hash_chain_tamper_detection()
         test_coral_live_state()
         test_independent_rpc_and_terms_immutability()
+        test_live_workflow_sqlite_pair_verification()
 
         print("\n" + "=" * 65)
-        print(" ALL 7 VERIFICATION TEST MODULES PASSED SUCCESSFULLY!")
+        print(" ALL 8 VERIFICATION TEST MODULES PASSED SUCCESSFULLY!")
         print("=" * 65 + "\n")
     except Exception as e:
         print(f"\n[FAILED] System verification failed: {e}")
