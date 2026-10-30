@@ -1,0 +1,17 @@
+# Local virtual environment
+.venv/
+venv/
+env/
+
+# Python cache & test artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# Test files and databases (prevent uvicorn watcher reload storms)
+test_*.py
+*.db
+*.sqlite
+*.sqlite3
+.locks/
