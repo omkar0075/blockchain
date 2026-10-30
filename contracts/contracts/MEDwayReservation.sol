@@ -149,6 +149,7 @@ contract MEDwayReservation {
     error InstitutionInactive();
     error WalletAlreadyAuthorized();
     error WalletNotAuthorized();
+    error WalletAssignedToDifferentInstitution();
     error UnauthorizedRequester();
     error UnauthorizedProvider();
 
@@ -232,7 +233,15 @@ contract MEDwayReservation {
     ) private {
         if (wallet == address(0)) revert InvalidAddress();
         WalletInfo storage w = wallets[wallet];
-        if (w.isActive && w.institutionId == institutionId) revert WalletAlreadyAuthorized();
+
+        // 1. Reject authorization if the wallet is already active (regardless of institution)
+        if (w.isActive) revert WalletAlreadyAuthorized();
+
+        // 2. Reject reassignment if the wallet historically belonged to a different institution
+        // Preserves historical audit records, signature provenance, and attribution integrity
+        if (w.institutionId != bytes32(0) && w.institutionId != institutionId) {
+            revert WalletAssignedToDifferentInstitution();
+        }
 
         wallets[wallet] = WalletInfo({
             institutionId: institutionId,

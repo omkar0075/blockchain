@@ -1501,6 +1501,61 @@ describe("MEDwayReservation", async function () {
       assert.equal(await medway.read.isRequesterWallet([requester.account.address]), false);
     });
 
+    it("Should reject authorizing an active wallet for a different institution (anti-reassignment)", async function () {
+      const { medway } = await deployFixture();
+
+      // requester.account.address is already an active wallet for Hospital A
+      // Attempting to authorize it for Lab C must revert with WalletAlreadyAuthorized
+      await viem.assertions.revertWithCustomError(
+        medway.write.authorizeWallet(
+          [labCId, requester.account.address],
+          { account: deployer.account }
+        ),
+        medway,
+        "WalletAlreadyAuthorized"
+      );
+    });
+
+    it("Should reject reassigning a revoked wallet to a different institution to preserve historical records", async function () {
+      const { medway } = await deployFixture();
+
+      // Revoke requester wallet from Hospital A
+      await medway.write.revokeWallet([requester.account.address], { account: deployer.account });
+      assert.equal(await medway.read.isRequesterWallet([requester.account.address]), false);
+
+      // Attempting to assign this inactive Hospital A wallet to Lab C must revert with WalletAssignedToDifferentInstitution
+      await viem.assertions.revertWithCustomError(
+        medway.write.authorizeWallet(
+          [labCId, requester.account.address],
+          { account: deployer.account }
+        ),
+        medway,
+        "WalletAssignedToDifferentInstitution"
+      );
+    });
+
+    it("Should allow the same institution to re-activate its own previously revoked wallet", async function () {
+      const { medway } = await deployFixture();
+
+      // Revoke requester wallet from Hospital A
+      await medway.write.revokeWallet([requester.account.address], { account: deployer.account });
+      assert.equal(await medway.read.isRequesterWallet([requester.account.address]), false);
+
+      // Hospital A re-authorizes its own wallet -> succeeds!
+      await medway.write.authorizeWallet(
+        [hospitalAId, requester.account.address],
+        { account: deployer.account }
+      );
+      assert.equal(await medway.read.isRequesterWallet([requester.account.address]), true);
+
+      // Lookup confirms identity and historical attribution is intact
+      const [instId, , , , isWalletActive] = await medway.read.getInstitutionByWallet([
+        requester.account.address,
+      ]);
+      assert.equal(instId, hospitalAId);
+      assert.equal(isWalletActive, true);
+    });
+
     it("Should reject non-owner from registering institutions or managing wallets", async function () {
       const { medway } = await deployFixture();
       const testInstId = pad(stringToHex("hospital-rogue"), { size: 32 });
