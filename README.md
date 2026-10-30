@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI_Python_3.11+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Viem](https://img.shields.io/badge/Web3_Bridge-Viem_v2.57-black?style=for-the-badge&logo=v&logoColor=white)](https://viem.sh)
 [![React 18](https://img.shields.io/badge/Frontend-React_18_Vite-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
-[![Hardhat Tests](https://img.shields.io/badge/Hardhat_Tests-95%2F95_Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white)](contracts/test)
+[![Hardhat Tests](https://img.shields.io/badge/Hardhat_Tests-113%2F113_Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white)](contracts/test)
 [![Verification Suite](https://img.shields.io/badge/System_Verification-8%2F8_Passing-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](backend/test-system-verification.py)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 
@@ -517,8 +517,8 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 MEDway includes two comprehensive test suites:
 
-### 1. Smart Contract Test Suite (`95/95 Passing`)
-Covers deployment, ownership, lifecycle transitions, authorization, expiry, dispute handling, gasless EIP-712 meta-transactions, on-chain Institutional Identity Registry, adversarial security controls, and Consortium Arbitration Board governance:
+### 1. Smart Contract Test Suite (`113/113 Passing`)
+Covers deployment, ownership, lifecycle transitions, authorization, expiry, dispute handling, gasless EIP-712 meta-transactions, on-chain Institutional Identity Registry, adversarial security controls, Consortium Arbitration Board governance, and Feature 3 Autonomous Resource Registration & Capacity Locking (with Two-Phase Commit & Local Adversarial Attack Suite):
 
 ```bash
 cd contracts
@@ -552,8 +552,10 @@ Running node:test tests
     Institutional Identity Registry - Feature 2 (14 tests)
     Feature 2: Adversarial Multi-Party Authorization & Security Checks (13 tests)
     Consortium Arbitration Board - Governance Item D (6 tests)
+    Autonomous Resource Registration & Capacity Locking - Feature 3 (10 tests)
+    Feature 3: Local Adversarial & Attack Stress Tests (8 tests)
 
-95 passing (3 solidity, 92 nodejs)
+113 passing (3 solidity, 110 nodejs)
 ```
 
 ---
