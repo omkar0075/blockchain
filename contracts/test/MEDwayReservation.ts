@@ -431,7 +431,7 @@ describe("MEDwayReservation", async function () {
       );
     });
 
-    it("Should revert with Unauthorized if non-provider tries to fulfill", async function () {
+    it("Should revert with UnauthorizedProvider if non-provider tries to fulfill", async function () {
       const { medway } = await deployFixture();
       const { reservationId } = await createSampleReservation(medway);
 
@@ -440,7 +440,7 @@ describe("MEDwayReservation", async function () {
       await viem.assertions.revertWithCustomError(
         medway.write.fulfillReservation([reservationId], { account: thirdParty.account }),
         medway,
-        "Unauthorized"
+        "UnauthorizedProvider"
       );
     });
 
@@ -2166,6 +2166,87 @@ describe("MEDwayReservation", async function () {
       await medway.write.cancelReservation([reservationId], { account: requester.account });
       const cancelled = await medway.read.reservations([reservationId]);
       assert.equal(cancelled[5], Status.Cancelled);
+    });
+
+    it("Authorized replacement wallet can fulfill existing commitments after provider wallet revocation", async function () {
+      const { medway } = await deployFixture();
+      const { reservationId } = await createSampleReservation(medway);
+      const [, , , , replacementWallet] = await viem.getWalletClients();
+
+      // Provider accepts reservation -> Status.Committed
+      await medway.write.acceptReservation([reservationId], { account: provider.account });
+
+      // Provider's initial wallet is revoked due to key rotation
+      await medway.write.revokeWallet([provider.account.address], { account: deployer.account });
+      assert.equal(await medway.read.isProviderWallet([provider.account.address]), false);
+
+      // Institution authorizes a replacement wallet for Lab C
+      await medway.write.authorizeWallet([labCId, replacementWallet.account.address], { account: deployer.account });
+      assert.equal(await medway.read.isProviderWallet([replacementWallet.account.address]), true);
+
+      // Replacement wallet can directly fulfill the existing institutional commitment
+      await medway.write.fulfillReservation([reservationId], { account: replacementWallet.account });
+
+      const fulfilled = await medway.read.reservations([reservationId]);
+      assert.equal(fulfilled[5], Status.Fulfilled);
+      assert.ok(fulfilled[7] > 0n); // fulfilledAt timestamp recorded
+    });
+
+    it("Authorized replacement wallet can formally rotate assigned wallet on existing reservation", async function () {
+      const { medway } = await deployFixture();
+      const { reservationId } = await createSampleReservation(medway);
+      const [, , , , replacementWallet] = await viem.getWalletClients();
+
+      // Provider accepts reservation -> Status.Committed
+      await medway.write.acceptReservation([reservationId], { account: provider.account });
+
+      // Authorize replacement wallet for Lab C
+      await medway.write.authorizeWallet([labCId, replacementWallet.account.address], { account: deployer.account });
+
+      // Call rotateReservationWallet to update designated provider wallet
+      const txHash = await medway.write.rotateReservationWallet(
+        [reservationId, replacementWallet.account.address],
+        { account: provider.account } // Called by Lab C
+      );
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      const logs = parseEventLogs({
+        abi: medway.abi,
+        logs: receipt.logs,
+        eventName: "ReservationWalletRotated",
+      });
+      assert.equal(logs.length, 1);
+      assert.equal(logs[0].args.reservationId, reservationId);
+      assert.equal(logs[0].args.oldWallet.toLowerCase(), provider.account.address.toLowerCase());
+      assert.equal(logs[0].args.newWallet.toLowerCase(), replacementWallet.account.address.toLowerCase());
+      assert.equal(logs[0].args.isProvider, true);
+
+      const updated = await medway.read.reservations([reservationId]);
+      assert.equal(updated[3].toLowerCase(), replacementWallet.account.address.toLowerCase());
+    });
+
+    it("Outsiders cannot fulfill or rotate existing commitments", async function () {
+      const { medway } = await deployFixture();
+      const { reservationId } = await createSampleReservation(medway);
+
+      await medway.write.acceptReservation([reservationId], { account: provider.account });
+
+      // Third party cannot fulfill
+      await viem.assertions.revertWithCustomError(
+        medway.write.fulfillReservation([reservationId], { account: thirdParty.account }),
+        medway,
+        "UnauthorizedProvider"
+      );
+
+      // Third party cannot rotate reservation wallet
+      await viem.assertions.revertWithCustomError(
+        medway.write.rotateReservationWallet(
+          [reservationId, thirdParty.account.address],
+          { account: thirdParty.account }
+        ),
+        medway,
+        "WalletNotAuthorized"
+      );
     });
   });
 });

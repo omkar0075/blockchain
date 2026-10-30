@@ -130,6 +130,12 @@ contract MEDwayReservation {
         bytes32 indexed institutionId,
         address indexed wallet
     );
+    event ReservationWalletRotated(
+        bytes32 indexed reservationId,
+        address indexed oldWallet,
+        address indexed newWallet,
+        bool isProvider
+    );
 
     // Errors
     error Unauthorized();
@@ -487,11 +493,11 @@ contract MEDwayReservation {
     }
 
     /// @notice Provider attests that the off-chain resource was delivered.
-    /// @dev Cannot fulfill after the agreed expiration deadline has passed.
+    /// @dev Can be called by the designated provider wallet or any active authorized wallet of the provider institution.
+    ///      Ensures that wallet revocation/rotation does not prevent fulfillment of existing commitments.
     function fulfillReservation(bytes32 reservationId) external {
         Reservation storage r = _get(reservationId);
-        if (msg.sender != r.provider) revert Unauthorized();
-        if (!isProviderWallet(r.provider)) revert UnauthorizedProvider();
+        if (!_isProviderInstitutionWallet(r, msg.sender)) revert UnauthorizedProvider();
         if (r.status != Status.Committed) revert InvalidStatus();
         if (block.timestamp > r.expiresAt) revert InvalidExpiry();
 
@@ -501,9 +507,12 @@ contract MEDwayReservation {
     }
 
     /// @notice Requester or provider can cancel a proposal or commitment before expiry.
+    /// @dev Supports active replacement wallets of either institution if an initial wallet was revoked.
     function cancelReservation(bytes32 reservationId) external {
         Reservation storage r = _get(reservationId);
-        if (msg.sender != r.requester && msg.sender != r.provider) {
+        bool isReq = _isRequesterInstitutionWallet(r, msg.sender);
+        bool isProv = _isProviderInstitutionWallet(r, msg.sender);
+        if (!isReq && !isProv) {
             revert Unauthorized();
         }
         if (
@@ -536,7 +545,9 @@ contract MEDwayReservation {
         bytes32 evidenceHash
     ) external {
         Reservation storage r = _get(reservationId);
-        if (msg.sender != r.requester && msg.sender != r.provider) {
+        bool isReq = _isRequesterInstitutionWallet(r, msg.sender);
+        bool isProv = _isProviderInstitutionWallet(r, msg.sender);
+        if (!isReq && !isProv) {
             revert Unauthorized();
         }
         if (
@@ -555,6 +566,63 @@ contract MEDwayReservation {
         r.disputeEvidence = evidenceHash;
         r.disputedBy = msg.sender;
         emit ReservationDisputed(reservationId, msg.sender, evidenceHash);
+    }
+
+    /// @notice Reassign an outstanding reservation's designated wallet to an active authorized wallet of the same institution.
+    /// @dev Allows institutions or contract owner to rotate keys for outstanding commitments without disrupting commitments.
+    function rotateReservationWallet(
+        bytes32 reservationId,
+        address newWallet
+    ) external {
+        Reservation storage r = _get(reservationId);
+        if (r.status != Status.Proposed && r.status != Status.Committed) {
+            revert InvalidStatus();
+        }
+        if (newWallet == address(0)) revert InvalidAddress();
+
+        WalletInfo storage newW = wallets[newWallet];
+        if (!newW.isActive) revert WalletNotAuthorized();
+
+        bytes32 reqInstId = wallets[r.requester].institutionId;
+        bytes32 provInstId = wallets[r.provider].institutionId;
+
+        if (newW.institutionId == provInstId) {
+            if (!_isProviderInstitutionWallet(r, msg.sender) && msg.sender != owner) {
+                revert Unauthorized();
+            }
+            if (!isProviderWallet(newWallet)) revert UnauthorizedProvider();
+            address oldWallet = r.provider;
+            r.provider = newWallet;
+            emit ReservationWalletRotated(reservationId, oldWallet, newWallet, true);
+        } else if (newW.institutionId == reqInstId) {
+            if (!_isRequesterInstitutionWallet(r, msg.sender) && msg.sender != owner) {
+                revert Unauthorized();
+            }
+            if (!isRequesterWallet(newWallet)) revert UnauthorizedRequester();
+            address oldWallet = r.requester;
+            r.requester = newWallet;
+            emit ReservationWalletRotated(reservationId, oldWallet, newWallet, false);
+        } else {
+            revert WalletAssignedToDifferentInstitution();
+        }
+    }
+
+    /// @notice Check if caller is an active authorized wallet representing the requester institution of a reservation.
+    function _isRequesterInstitutionWallet(Reservation storage r, address caller) private view returns (bool) {
+        if (caller == r.requester && isRequesterWallet(caller)) return true;
+        bytes32 reqInstId = wallets[r.requester].institutionId;
+        if (reqInstId == bytes32(0)) return false;
+        WalletInfo storage w = wallets[caller];
+        return (w.isActive && w.institutionId == reqInstId && institutions[reqInstId].isActive);
+    }
+
+    /// @notice Check if caller is an active authorized wallet representing the provider institution of a reservation.
+    function _isProviderInstitutionWallet(Reservation storage r, address caller) private view returns (bool) {
+        if (caller == r.provider && isProviderWallet(caller)) return true;
+        bytes32 provInstId = wallets[r.provider].institutionId;
+        if (provInstId == bytes32(0)) return false;
+        WalletInfo storage w = wallets[caller];
+        return (w.isActive && w.institutionId == provInstId && institutions[provInstId].isActive);
     }
 
     /// @notice Authorized consortium owner/arbitrator resolves an active dispute.
