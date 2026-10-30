@@ -96,7 +96,7 @@ flowchart TB
 
     subgraph API["2. Orchestration Tier (FastAPI / Python 3.11+)"]
         B1["POST /requests"] --> B2["Autonomous Agent Engine<br/>(agents.py)"]
-        B2 --> B3["Constraint Solver & Matcher<br/>(Hospital A -> Lab C)"]
+        B2 --> B3["Constraint Solver & Matcher<br/>(Hospital A to Lab C)"]
         B3 --> B4["POST /proposals/{id}/authorize<br/>(Human-in-the-Loop Sign-off)"]
     end
 
@@ -109,16 +109,16 @@ flowchart TB
     subgraph CHAIN["4. On-Chain Ledger Tier (MST Coral Testnet - Chain ID 54635)"]
         D1["MEDwayReservation.sol<br/>(0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC)"]
         D2["EIP-712 Signature Verification<br/>(ecrecover + Nonces)"]
-        D3["Atomic State Engine<br/>(Proposed -> Committed -> Fulfilled)"]
+        D3["Atomic State Engine<br/>(Proposed to Committed to Fulfilled)"]
         D4["7-Day Dispute Window & Resolution"]
     end
 
-    UI -->|HTTP / JSON| API
-    API -->|Subprocess / JSON| BRIDGE
-    BRIDGE -->|EIP-712 Meta-Transactions| CHAIN
-    CHAIN -->|Receipt Logs (parseEventLogs)| BRIDGE
-    BRIDGE -->|Confirmed State| API
-    API -->|Real-Time Status| UI
+    UI -->|"HTTP / JSON"| API
+    API -->|"Subprocess / JSON"| BRIDGE
+    BRIDGE -->|"EIP-712 Meta-Transactions"| CHAIN
+    CHAIN -->|"Receipt Logs (parseEventLogs)"| BRIDGE
+    BRIDGE -->|"Confirmed State"| API
+    API -->|"Real-Time Status"| UI
 ```
 
 ---
@@ -201,20 +201,20 @@ The core contract [`MEDwayReservation.sol`](contracts/contracts/MEDwayReservatio
 
 ```mermaid
 stateDiagram-v2
-    [*] --> Proposed: createReservationWithSig()
-    Proposed --> Committed: acceptReservationWithSig()
-    Proposed --> Cancelled: cancelReservation() [Requester/Provider]
-    Proposed --> Expired: expireReservation() [Past expiresAt]
+    [*] --> Proposed: createReservationWithSig
+    Proposed --> Committed: acceptReservationWithSig
+    Proposed --> Cancelled: cancelReservation (Requester or Provider)
+    Proposed --> Expired: expireReservation (Past expiresAt)
     
-    Committed --> Fulfilled: fulfillReservation() [Provider Attestation]
-    Committed --> Cancelled: cancelReservation() [Before expiresAt]
-    Committed --> Disputed: disputeReservation() [Evidence Hash]
+    Committed --> Fulfilled: fulfillReservation (Provider Attestation)
+    Committed --> Cancelled: cancelReservation (Before expiresAt)
+    Committed --> Disputed: disputeReservation (Evidence Hash)
     
-    Fulfilled --> Disputed: disputeReservation() [Within 7 Days]
+    Fulfilled --> Disputed: disputeReservation (Within 7 Days)
     Fulfilled --> [*]: Settled
     
-    Disputed --> Fulfilled: resolveDispute(Fulfilled) [Owner/Arbiter]
-    Disputed --> Cancelled: resolveDispute(Cancelled) [Owner/Arbiter]
+    Disputed --> Fulfilled: resolveDispute to Fulfilled (Owner or Arbiter)
+    Disputed --> Cancelled: resolveDispute to Cancelled (Owner or Arbiter)
     
     Cancelled --> [*]
     Expired --> [*]
