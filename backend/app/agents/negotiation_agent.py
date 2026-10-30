@@ -260,3 +260,4 @@ class NegotiationAgent(BaseAgent):
             return False
 
         return True
+

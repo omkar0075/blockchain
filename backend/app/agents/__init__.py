@@ -18,6 +18,7 @@ from .request_agent import (
     DeterministicRequestParser,
     RequestAgent,
 )
+from .verification_agent import VerificationAgent
 from ..blockchain import get_onchain_capacity
 from ..data import INSTITUTIONS
 from ..models import ResourceRequest, AllocationOffer
@@ -130,6 +131,7 @@ __all__ = [
     "ProviderAgent",
     "register_agent",
     "RequestAgent",
+    "VerificationAgent",
     "BaseRequestParser",
     "DeterministicRequestParser",
 ]
