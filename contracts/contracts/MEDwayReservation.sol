@@ -587,6 +587,10 @@ contract MEDwayReservation {
         }
         if (v < 27) v += 27;
         if (v != 27 && v != 28) return address(0);
+        // EIP-2 / OpenZeppelin ECDSA signature malleability guard (low-s check)
+        if (uint256(s) > 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E735E5A8790BA3A3984551FCD5F) {
+            return address(0);
+        }
         return ecrecover(digest, v, r, s);
     }
 

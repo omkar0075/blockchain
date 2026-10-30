@@ -164,6 +164,13 @@ def create_request(
         default_actor_id=request.requesting_institution_id,
     )
 
+    # Strictly prevent client-supplied institution ID spoofing
+    if actor.role != "arbitrator" and request.requesting_institution_id != actor.id:
+        raise HTTPException(
+            status_code=403,
+            detail=f"Actor '{actor.id}' is not permitted to submit requests for institution '{request.requesting_institution_id}'. Request payload identity must match authenticated credentials."
+        )
+
     offers = discover_and_verify(request)
     selected = choose_offer(request, offers)
     proposal = AllocationProposal(
@@ -273,22 +280,29 @@ def authorize_proposal(
         "created_at": None,
     }
 
-    if onchain_res.get("success"):
-        commitment["ledger"] = "coral-testnet"
-        commitment["onchain_reservation_id"] = onchain_res["reservationId"]
-        commitment["tx_hash"] = onchain_res["txHash"]
-        commitment["block_number"] = onchain_res["blockNumber"]
-        commitment["onchain_status"] = "Proposed"
-        commitment["message"] = f"Commitment registered on Coral Testnet in block #{onchain_res['blockNumber']}"
-    else:
-        commitment["ledger"] = "coral-testnet-ready"
-        commitment["relayer_notice"] = onchain_res.get("error")
-        commitment["message"] = (
-            "Authorized by institution. To broadcast live to Coral Testnet, ensure "
-            "CORAL_PRIVATE_KEY is set in backend/.env."
+    if not onchain_res.get("success"):
+        record_audit_event(
+            action="PROPOSAL_AUTHORIZATION_FAILED",
+            actor=actor.id,
+            role=actor.role,
+            details={
+                "proposal_id": proposal_id,
+                "error": onchain_res.get("error"),
+            },
+        )
+        raise HTTPException(
+            status_code=502,
+            detail=f"Coral on-chain transaction failed: {onchain_res.get('error', 'Relayed transaction rejected by blockchain')}"
         )
 
-    # Persist in SQLite
+    commitment["ledger"] = "coral-testnet"
+    commitment["onchain_reservation_id"] = onchain_res["reservationId"]
+    commitment["tx_hash"] = onchain_res["txHash"]
+    commitment["block_number"] = onchain_res["blockNumber"]
+    commitment["onchain_status"] = "Proposed"
+    commitment["message"] = f"Commitment registered on Coral Testnet in block #{onchain_res['blockNumber']}"
+
+    # Persist in SQLite ONLY on verified blockchain execution
     save_commitment(commitment)
     _sync_commitment_from_chain(commitment)
 

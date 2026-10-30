@@ -131,7 +131,27 @@ def test_authentication_and_rbac():
         assert e.status_code == 403
         print(f"  [+] Correctly blocked non-arbitrator from arbitration: HTTP {e.status_code} ({e.detail})")
 
-    print("  RESULT: PASSED (All RBAC permission guards verified)")
+    # 5. Identity Spoofing Protection: User cannot choose own institution in request payload
+    print("  Subtest 2.5: Authenticated actor attempting to spoof institution in request payload...")
+    spoofed_req = ResourceRequest(
+        requesting_institution_id="hospital-b",
+        resource_type="diagnostic_slot",
+        quantity=2,
+        urgency="routine",
+        required_by_hours=24,
+    )
+    try:
+        create_request(
+            request=spoofed_req,
+            x_actor_id="hospital-a",
+            x_api_key="medway-key-hosp-a-sec91",
+        )
+        assert False, "Should have rejected spoofed institution ID in payload!"
+    except HTTPException as e:
+        assert e.status_code == 403
+        print(f"  [+] Correctly rejected institution spoofing: HTTP {e.status_code} ({e.detail})")
+
+    print("  RESULT: PASSED (All RBAC permission guards & anti-spoofing verified)")
 
 
 def test_arbitration_alignment():
