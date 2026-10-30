@@ -253,21 +253,20 @@ class DiscoveryAgent(BaseAgent):
         p_postal = (provider.get("postal_code") or "").lower()
         p_areas = [str(a).lower() for a in provider.get("service_areas", [])]
 
-        if req_loc.city and req_loc.city.lower() in p_city:
-            return True
-        if req_loc.postal_code and req_loc.postal_code.lower() == p_postal:
-            return True
-        if req_loc.service_area:
-            req_area = req_loc.service_area.lower()
-            if any(req_area in a or a in req_area for a in p_areas):
-                return True
+        # If both specify cities, they must be compatible
+        if req_loc.city and p_city and req_loc.city.lower() not in p_city and p_city not in req_loc.city.lower():
+            return False
 
-        # If request specified postal code and provider postal code differs
+        # If both specify postal codes, they must match
         if req_loc.postal_code and p_postal and req_loc.postal_code.lower() != p_postal:
             return False
 
-        # If request specified city and provider city differs
-        if req_loc.city and p_city and req_loc.city.lower() not in p_city:
-            return False
+        if req_loc.city and p_city and (req_loc.city.lower() in p_city or p_city in req_loc.city.lower()):
+            return True
+        if req_loc.postal_code and p_postal and req_loc.postal_code.lower() == p_postal:
+            return True
+        if req_loc.service_area and any(req_loc.service_area.lower() in a or a in req_loc.service_area.lower() for a in p_areas):
+            return True
 
-        return True
+        return False
+
