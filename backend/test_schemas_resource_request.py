@@ -196,3 +196,48 @@ def test_json_roundtrip_serialization():
     assert restored.resource_type == ResourceType.DIAGNOSTIC_SLOT
     assert restored.constraints.specifications == {"scan_type": "MRI_3T"}
     assert restored.created_at.tzinfo is not None
+
+
+def test_flexible_optional_location():
+    """Verify location is usable with only postal code, service area, or even omitted."""
+    now = datetime.now(timezone.utc)
+    deadline = now + timedelta(hours=8)
+
+    # 1. Postal code only (no city or GPS)
+    loc_postal = LocationArea(postal_code="560001")
+    req1 = ResourceRequest(
+        requester_institution_id="clinic-a",
+        resource_type=ResourceType.AMBULANCE,
+        quantity=1,
+        location=loc_postal,
+        required_by=deadline,
+    )
+    assert req1.location.postal_code == "560001"
+    assert req1.location.city is None
+    assert req1.location.coordinates is None
+
+    # 2. Service area string only
+    loc_area = LocationArea(service_area="Greater Metro North District")
+    req2 = ResourceRequest(
+        requester_institution_id="clinic-a",
+        resource_type=ResourceType.BLOOD_UNIT,
+        quantity=2,
+        location=loc_area,
+        required_by=deadline,
+    )
+    assert req2.location.service_area == "Greater Metro North District"
+
+    # 3. Completely empty location area raises ValueError (must have at least one indicator)
+    with pytest.raises(ValueError, match="At least one location indicator"):
+        LocationArea()
+
+    # 4. Location completely optional on ResourceRequest
+    req_no_loc = ResourceRequest(
+        requester_institution_id="clinic-b",
+        resource_type=ResourceType.MEDICINE,
+        quantity=10,
+        required_by=deadline,
+    )
+    assert req_no_loc.location is None
+
+

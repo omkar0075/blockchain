@@ -37,13 +37,16 @@ class LocationArea(BaseModel):
     Service area and geographic routing boundary.
     
     Contains strictly logistical location data without patient address or PII.
+    Coordinates and specific fields are optional so requests remain fully usable
+    with postal codes, descriptive service areas, regions, or cities.
     """
     model_config = ConfigDict(extra="ignore")
 
-    city: str = Field(..., min_length=1, description="Primary city or metropolitan area")
+    city: Optional[str] = Field(default=None, description="Primary city or metropolitan area")
     region: Optional[str] = Field(default=None, description="State, province, or district")
     postal_code: Optional[str] = Field(default=None, description="Logistical postal routing code")
-    coordinates: Optional[GeoCoordinates] = Field(default=None, description="Centroid or facility coordinates")
+    service_area: Optional[str] = Field(default=None, description="Descriptive service area or district name")
+    coordinates: Optional[GeoCoordinates] = Field(default=None, description="Optional facility or centroid coordinates")
     max_radius_km: Optional[float] = Field(
         default=None,
         gt=0.0,
@@ -51,13 +54,21 @@ class LocationArea(BaseModel):
         description="Maximum acceptable search radius in kilometers",
     )
 
-    @field_validator("city")
+    @field_validator("city", "region", "postal_code", "service_area")
     @classmethod
-    def validate_city(cls, v: str) -> str:
-        stripped = v.strip()
-        if not stripped:
-            raise ValueError("City cannot be empty or whitespace only")
-        return stripped
+    def clean_strings(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            stripped = v.strip()
+            return stripped if stripped else None
+        return None
+
+    @model_validator(mode="after")
+    def validate_has_some_location(self) -> "LocationArea":
+        if not any([self.city, self.region, self.postal_code, self.service_area, self.coordinates]):
+            raise ValueError(
+                "At least one location indicator (city, region, postal_code, service_area, or coordinates) must be provided"
+            )
+        return self
 
 
 class ResourceConstraints(BaseModel):
@@ -117,7 +128,10 @@ class ResourceRequest(BaseModel):
     resource_type: ResourceType = Field(..., description="Category of healthcare resource needed")
     quantity: int = Field(..., gt=0, le=10000, description="Number of units/slots requested")
     urgency: UrgencyLevel = Field(default=UrgencyLevel.ROUTINE, description="Urgency priority level")
-    location: LocationArea = Field(..., description="Target service area or routing boundaries")
+    location: Optional[LocationArea] = Field(
+        default=None,
+        description="Optional target service area or routing boundaries",
+    )
     required_by: datetime = Field(
         ...,
         description="Target deadline timestamp for resource availability (UTC, timezone-aware)",
@@ -175,3 +189,4 @@ class ResourceRequest(BaseModel):
         if self.required_by < self.created_at:
             raise ValueError("required_by deadline cannot be earlier than created_at timestamp")
         return self
+

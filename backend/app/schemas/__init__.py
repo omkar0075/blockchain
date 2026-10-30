@@ -4,6 +4,11 @@ from .agent_messages import (
     AgentResult,
     AgentStatus,
 )
+from .provider_offer import (
+    OfferStatus,
+    ProviderCost,
+    ProviderOffer,
+)
 from .resource_request import (
     GeoCoordinates,
     LocationArea,
@@ -20,6 +25,9 @@ __all__ = [
     "AgentStatus",
     "GeoCoordinates",
     "LocationArea",
+    "OfferStatus",
+    "ProviderCost",
+    "ProviderOffer",
     "ResourceConstraints",
     "ResourceRequest",
     "ResourceType",
