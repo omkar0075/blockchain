@@ -128,6 +128,56 @@ def init_db() -> None:
             """
         )
 
+        # 5. Persistent Workflows Table (durable local replica of multi-agent workflows)
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workflows (
+                workflow_id TEXT PRIMARY KEY,
+                state TEXT NOT NULL,
+                requester_id TEXT,
+                resource_type TEXT,
+                quantity INTEGER,
+                selected_provider_id TEXT,
+                selected_offer TEXT,
+                selected_proposal TEXT,
+                verification_result TEXT,
+                approved_by TEXT,
+                approved_at TEXT,
+                is_ready_for_approval INTEGER DEFAULT 0,
+                is_committed INTEGER DEFAULT 0,
+                tx_hash TEXT,
+                block_number INTEGER,
+                lock_id TEXT,
+                reservation_id TEXT,
+                onchain_status TEXT,
+                raw_payload TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                updated_at REAL NOT NULL
+            )
+            """
+        )
+
+        # 6. Append-only Workflow State Transitions Table
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS workflow_transitions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                workflow_id TEXT NOT NULL,
+                from_state TEXT,
+                to_state TEXT NOT NULL,
+                agent TEXT NOT NULL,
+                details TEXT,
+                timestamp REAL NOT NULL
+            )
+            """
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_workflow_transitions_wf ON workflow_transitions(workflow_id, timestamp)"
+        )
+        cursor.execute(
+            "CREATE INDEX IF NOT EXISTS idx_workflows_state ON workflows(state)"
+        )
+
         conn.commit()
 
 
@@ -448,3 +498,143 @@ def verify_audit_trail_integrity() -> dict[str, Any]:
             "root_event_hash": expected_prev,
             "status": "Cryptographically verified & tamper-evident",
         }
+
+
+# =============================================================================
+# Multi-Agent Workflow State & Transition Persistence
+# =============================================================================
+
+def save_workflow_record(record: dict[str, Any]) -> None:
+    """Insert or update a persistent workflow state record."""
+    workflow_id = str(record["workflow_id"])
+    now = time.time()
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT OR REPLACE INTO workflows (
+                workflow_id, state, requester_id, resource_type, quantity,
+                selected_provider_id, selected_offer, selected_proposal,
+                verification_result, approved_by, approved_at,
+                is_ready_for_approval, is_committed,
+                tx_hash, block_number, lock_id, reservation_id, onchain_status,
+                raw_payload, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                workflow_id,
+                record.get("state", "UNKNOWN"),
+                record.get("requester_id"),
+                record.get("resource_type"),
+                record.get("quantity"),
+                record.get("selected_provider_id"),
+                record.get("selected_offer"),
+                record.get("selected_proposal"),
+                record.get("verification_result"),
+                record.get("approved_by"),
+                record.get("approved_at"),
+                1 if record.get("is_ready_for_approval") else 0,
+                1 if record.get("is_committed") else 0,
+                record.get("tx_hash"),
+                record.get("block_number"),
+                record.get("lock_id"),
+                record.get("reservation_id"),
+                record.get("onchain_status"),
+                record.get("raw_payload", "{}"),
+                record.get("created_at", now),
+                record.get("updated_at", now),
+            ),
+        )
+        conn.commit()
+
+
+def get_workflow_record(workflow_id: str) -> Optional[dict[str, Any]]:
+    """Retrieve a persistent workflow state record by workflow ID."""
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT * FROM workflows WHERE workflow_id = ?",
+            (str(workflow_id),),
+        ).fetchone()
+        if not row:
+            return None
+        return dict(row)
+
+
+def append_workflow_transition(
+    workflow_id: str,
+    from_state: Optional[str],
+    to_state: str,
+    agent: str,
+    details: str,
+    timestamp: Optional[Any] = None,
+) -> None:
+    """Store an immutable state transition in the append-only workflow transition history."""
+    if timestamp is None:
+        ts = time.time()
+    elif isinstance(timestamp, (int, float)):
+        ts = float(timestamp)
+    elif isinstance(timestamp, str):
+        try:
+            ts = datetime.fromisoformat(timestamp).timestamp()
+        except Exception:
+            ts = time.time()
+    elif isinstance(timestamp, datetime):
+        ts = timestamp.timestamp()
+    else:
+        ts = time.time()
+
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO workflow_transitions (
+                workflow_id, from_state, to_state, agent, details, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                str(workflow_id),
+                from_state,
+                to_state,
+                agent,
+                details,
+                ts,
+            ),
+        )
+        conn.commit()
+
+
+def get_workflow_transitions(workflow_id: str) -> list[dict[str, Any]]:
+    """Retrieve chronological state transitions for a workflow."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            """
+            SELECT id, workflow_id, from_state, to_state, agent, details, timestamp
+            FROM workflow_transitions
+            WHERE workflow_id = ?
+            ORDER BY timestamp ASC, id ASC
+            """,
+            (str(workflow_id),),
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def list_workflow_records(state: Optional[str] = None) -> list[dict[str, Any]]:
+    """List persistent workflow records, optionally filtered by state."""
+    with get_connection() as conn:
+        if state:
+            rows = conn.execute(
+                "SELECT * FROM workflows WHERE state = ? ORDER BY created_at DESC",
+                (state,),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                "SELECT * FROM workflows ORDER BY created_at DESC"
+            ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def delete_workflow_record(workflow_id: str) -> None:
+    """Delete a workflow and its transitions (primarily for test cleanup)."""
+    with get_connection() as conn:
+        conn.execute("DELETE FROM workflow_transitions WHERE workflow_id = ?", (str(workflow_id),))
+        conn.execute("DELETE FROM workflows WHERE workflow_id = ?", (str(workflow_id),))
+        conn.commit()
+
