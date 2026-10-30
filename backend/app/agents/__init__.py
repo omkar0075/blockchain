@@ -19,6 +19,13 @@ from .request_agent import (
     RequestAgent,
 )
 from .verification_agent import VerificationAgent
+from .orchestrator import (
+    WorkflowOrchestrator,
+    WorkflowRecord,
+    WorkflowState,
+    WorkflowTransition,
+    create_default_registry,
+)
 from ..blockchain import get_onchain_capacity
 from ..data import INSTITUTIONS
 from ..models import ResourceRequest, AllocationOffer
@@ -132,6 +139,11 @@ __all__ = [
     "register_agent",
     "RequestAgent",
     "VerificationAgent",
+    "WorkflowOrchestrator",
+    "WorkflowRecord",
+    "WorkflowState",
+    "WorkflowTransition",
+    "create_default_registry",
     "BaseRequestParser",
     "DeterministicRequestParser",
 ]
