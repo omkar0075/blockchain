@@ -4,6 +4,10 @@ from .agent_messages import (
     AgentResult,
     AgentStatus,
 )
+from .negotiation import (
+    NegotiationProposal,
+    NegotiationStatus,
+)
 from .provider_offer import (
     OfferStatus,
     ProviderCost,
@@ -25,6 +29,8 @@ __all__ = [
     "AgentStatus",
     "GeoCoordinates",
     "LocationArea",
+    "NegotiationProposal",
+    "NegotiationStatus",
     "OfferStatus",
     "ProviderCost",
     "ProviderOffer",
