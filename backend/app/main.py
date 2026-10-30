@@ -7,6 +7,7 @@ from .blockchain import (
     get_blockchain_status,
     create_onchain_reservation,
     accept_onchain_reservation,
+    fulfill_onchain_reservation,
     get_onchain_reservation,
 )
 from .data import INSTITUTIONS, PROPOSALS, COMMITMENTS
@@ -149,6 +150,7 @@ def accept_commitment(commitment_id: str):
             detail=f"Coral acceptance failed: {accept_res.get('error')}",
         )
 
+    commitment["status"] = "committed"
     commitment["onchain_acceptance_tx_hash"] = accept_res["txHash"]
     commitment["onchain_status"] = "Committed"
     commitment["acceptance_block"] = accept_res["blockNumber"]
@@ -185,10 +187,50 @@ def fulfill_commitment(commitment_id: str):
     commitment = COMMITMENTS.get(commitment_id)
     if not commitment:
         raise HTTPException(status_code=404, detail="Commitment not found")
-    if commitment["status"] != "authorized":
-        raise HTTPException(status_code=409, detail="Only authorized commitments can be fulfilled")
-    commitment["status"] = "fulfilled"
-    return {
-        "commitment": commitment,
-        "note": "Fulfillment recorded in coordination ledger; real-world delivery attested off-chain."
-    }
+
+    current_status = commitment.get("status")
+    onchain_status = commitment.get("onchain_status")
+
+    if current_status == "fulfilled":
+        raise HTTPException(status_code=409, detail="Commitment is already fulfilled")
+
+    # In on-chain mode, must be Committed before it can be fulfilled
+    if onchain_status and onchain_status != "Committed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot fulfill reservation with on-chain status '{onchain_status}'. Reservation must be 'Committed' by provider first.",
+        )
+
+    reservation_id = commitment.get("onchain_reservation_id")
+    provider_id = commitment.get("provider_id", "lab-c")
+
+    if reservation_id:
+        fulfill_res = fulfill_onchain_reservation(reservation_id, provider=provider_id)
+        if not fulfill_res.get("success"):
+            raise HTTPException(
+                status_code=502,
+                detail=f"On-chain fulfillment failed: {fulfill_res.get('error')}",
+            )
+
+        commitment["status"] = "fulfilled"
+        commitment["onchain_status"] = "Fulfilled"
+        commitment["onchain_fulfillment_tx_hash"] = fulfill_res["txHash"]
+        commitment["fulfillment_block"] = fulfill_res["blockNumber"]
+        commitment["fulfilled_at"] = fulfill_res.get("fulfilledAt")
+        commitment["relayer_topup_tx"] = fulfill_res.get("relayerTopUpTx")
+        commitment["note"] = (
+            "Fulfilled on Coral Testnet by provider. 7-day dispute window (604,800s) is now active."
+        )
+        return {
+            "status": "fulfilled",
+            "commitment": commitment,
+            "blockchain": fulfill_res,
+        }
+    else:
+        # Off-chain mock fallback
+        commitment["status"] = "fulfilled"
+        commitment["note"] = "Fulfilled in off-chain demo ledger."
+        return {
+            "status": "fulfilled",
+            "commitment": commitment,
+        }

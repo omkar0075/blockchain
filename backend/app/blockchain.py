@@ -94,3 +94,17 @@ def get_onchain_reservation(reservation_id: str) -> dict[str, Any]:
         "--reservationId",
         reservation_id,
     ])
+
+
+def fulfill_onchain_reservation(
+    reservation_id: str,
+    provider: str = "lab-c",
+) -> dict[str, Any]:
+    """Attest resource delivery directly on Coral Testnet as provider with automated relayer gas top-up."""
+    return _run_node_command([
+        "fulfill",
+        "--reservationId",
+        reservation_id,
+        "--provider",
+        provider,
+    ])

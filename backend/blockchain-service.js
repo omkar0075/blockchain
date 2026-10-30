@@ -9,6 +9,7 @@ const {
   pad,
   stringToHex,
   isHex,
+  parseEther,
 } = require('viem');
 const { privateKeyToAccount } = require('viem/accounts');
 
@@ -403,6 +404,78 @@ async function cmdAcceptReservation(args) {
   });
 }
 
+async function cmdFulfillReservation(args) {
+  const reservationId = args.reservationId;
+  if (!reservationId || !isHex(reservationId) || reservationId.length !== 66) {
+    throw new Error('Missing or invalid reservationId (must be 0x... 32-byte hex).');
+  }
+
+  const providerId = args.provider || 'lab-c';
+  const providerAccount = resolveAccount(providerId);
+
+  const client = getPublicClient();
+  const artifact = loadArtifact();
+
+  // 1. Check provider's native MST gas balance on Coral
+  const balance = await client.getBalance({ address: providerAccount.address });
+  let topUpTxHash = null;
+
+  // Automated gas sponsorship: If balance is below 0.005 MST, relayer tops up 0.01 MST
+  const minRequired = parseEther('0.005');
+  if (balance < minRequired) {
+    const { account: relayerAccount, client: relayerWallet } = getRelayerClient();
+    topUpTxHash = await relayerWallet.sendTransaction({
+      to: providerAccount.address,
+      value: parseEther('0.01'),
+    });
+    await client.waitForTransactionReceipt({ hash: topUpTxHash });
+  }
+
+  // 2. Provider signs & submits fulfillReservation directly as msg.sender
+  const providerWallet = createWalletClient({
+    account: providerAccount,
+    chain: coralChain,
+    transport: http(RPC_URL),
+  });
+
+  const contract = getContract({
+    address: CONTRACT_ADDRESS,
+    abi: artifact.abi,
+    client: { public: client, wallet: providerWallet },
+  });
+
+  const txHash = await contract.write.fulfillReservation([reservationId], {
+    account: providerAccount,
+  });
+
+  const receipt = await client.waitForTransactionReceipt({ hash: txHash });
+
+  const fulfilledLogs = parseEventLogs({
+    abi: artifact.abi,
+    logs: receipt.logs,
+    eventName: 'ReservationFulfilled',
+  });
+
+  if (fulfilledLogs.length === 0) {
+    throw new Error('No ReservationFulfilled event found in transaction receipt logs.');
+  }
+
+  const fulfilledAt = fulfilledLogs[0].args.fulfilledAt.toString();
+
+  jsonOut({
+    success: true,
+    action: 'fulfill-reservation',
+    reservationId,
+    txHash,
+    blockNumber: Number(receipt.blockNumber),
+    gasUsed: receipt.gasUsed.toString(),
+    provider: providerAccount.address,
+    fulfilledAt,
+    status: 'Fulfilled',
+    relayerTopUpTx: topUpTxHash,
+  });
+}
+
 async function cmdGetReservation(args) {
   const reservationId = args.reservationId;
   if (!reservationId || !isHex(reservationId) || reservationId.length !== 66) {
@@ -494,6 +567,10 @@ async function main() {
     case 'get':
     case 'get-reservation':
       await cmdGetReservation(args);
+      break;
+    case 'fulfill':
+    case 'fulfill-reservation':
+      await cmdFulfillReservation(args);
       break;
     default:
       throw new Error(`Unknown command '${command}'. Use status, create, accept, or get.`);
