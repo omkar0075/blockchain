@@ -125,7 +125,7 @@ flowchart TB
     end
 
     subgraph CHAIN["4. On-Chain Ledger Tier (MST Coral Testnet - Chain ID 54635)"]
-        D1["MEDwayReservation.sol<br/>(0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995)"]
+        D1["MEDwayReservation.sol<br/>(0xbafa85b0797d0a793a2c934d623f02588fe9770a)"]
         D2["Institutional Identity Registry<br/>(Multi-Wallet RBAC + Lookup)"]
         D3["EIP-712 Signature Verification<br/>(ecrecover + Nonces)"]
         D4["Atomic State Engine<br/>(Proposed to Committed to Fulfilled)"]
@@ -194,7 +194,7 @@ sequenceDiagram
 
 | Parameter | On-Chain Verification Record |
 | :--- | :--- |
-| **Smart Contract Address** | [`0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995`](https://coralrpc.mstblockchain.com) |
+| **Smart Contract Address** | [`0xbafa85b0797d0a793a2c934d623f02588fe9770a`](https://coralrpc.mstblockchain.com) |
 | **Network & Chain ID** | **MST Coral Testnet** (`54635`) |
 | **RPC Endpoint** | `https://coralrpc.mstblockchain.com` |
 | **Contract Owner / Arbiter** | `0x5E5BB85E3f92389a75e8b555490c99af8B0e8607` |
@@ -315,7 +315,7 @@ flowchart TD
 
     subgraph Blockchain ["Decentralized Settlement Layer"]
         CoralRPC["MST Coral Testnet RPC (:54635)"]
-        Contract["MEDwayReservation.sol (0xf8a9...7995)"]
+        Contract["MEDwayReservation.sol (0xbafa...770a)"]
     end
 
     UI -->|"HTTP / REST"| API
@@ -431,8 +431,8 @@ Your `backend/.env` should contain:
 # MST Coral Testnet
 CORAL_RPC_URL=https://coralrpc.mstblockchain.com
 CHAIN_ID=54635
-CONTRACT_ADDRESS=0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995
-MEDWAY_CONTRACT_ADDRESS=0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995
+CONTRACT_ADDRESS=0xbafa85b0797d0a793a2c934d623f02588fe9770a
+MEDWAY_CONTRACT_ADDRESS=0xbafa85b0797d0a793a2c934d623f02588fe9770a
 
 # Relayer Key (Sponsors Gas on Coral)
 CORAL_PRIVATE_KEY=0x...
@@ -467,7 +467,7 @@ Expected output:
   "connected": true,
   "network": "Coral Testnet",
   "chainId": 54635,
-  "contractAddress": "0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995",
+  "contractAddress": "0xbafa85b0797d0a793a2c934d623f02588fe9770a",
   "latestBlock": 402066,
   "contractOwner": "0x5E5BB85E3f92389a75e8b555490c99af8B0e8607",
   "relayer": {
@@ -584,7 +584,7 @@ Output:
   RESULT: PASSED (All RBAC permission guards verified)
 
  TEST 3: Arbitration Alignment with On-Chain Contract Owner
-  [+] Live Coral Contract Address: 0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995
+  [+] Live Coral Contract Address: 0xbafa85b0797d0a793a2c934d623f02588fe9770a
   [+] Live On-Chain Contract Owner: 0x5E5BB85E3f92389a75e8b555490c99af8B0e8607
   [+] Backend Arbitrator Identity: 0x5E5BB85E3f92389a75e8b555490c99af8B0e8607
   [+] Alignment check: 100% MATCH (No divergence possible)
@@ -650,7 +650,7 @@ python backend/test_api_endpoints.py
 Output:
 ```text
 Testing FastAPI REST API Endpoints...
-  [+] GET /health -> 200 OK (Contract: 0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995)
+  [+] GET /health -> 200 OK (Contract: 0xbafa85b0797d0a793a2c934d623f02588fe9770a)
   [+] GET /institutions -> 200 OK (3 accredited institutions)
   [+] GET /institutions/hospital-a/onchain -> 200 OK (City Hospital A | Role: Requester)
   [+] GET /audit/verify -> 200 OK (Hash-chain Valid: True, Records: 35)
@@ -685,7 +685,7 @@ Output:
  MEDWAY INDEPENDENT ON-CHAIN VERIFIER & TERMS ATTESTATION TOOL
 ========================================================================
 [*] Direct Blockchain RPC:  https://coralrpc.mstblockchain.com
-[*] Target Smart Contract:  0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995
+[*] Target Smart Contract:  0xbafa85b0797d0a793a2c934d623f02588fe9770a
 [*] Target Reservation ID:  0xb550f09d...
 
 [+] DIRECT ON-CHAIN CONFIRMATION RECEIVED IN 112ms

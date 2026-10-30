@@ -47,7 +47,7 @@ const CHAIN_ID = parseInt(process.env.CHAIN_ID || '54635', 10);
 const CONTRACT_ADDRESS =
   process.env.CONTRACT_ADDRESS ||
   process.env.MEDWAY_CONTRACT_ADDRESS ||
-  '0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995';
+  '0xbafa85b0797d0a793a2c934d623f02588fe9770a';
 
 // Relayer private key (optional: if omitted, write calls report relayer unconfigured)
 const RELAYER_KEY =

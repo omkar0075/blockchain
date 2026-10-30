@@ -10,6 +10,12 @@ from pathlib import Path
 BACKEND_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BACKEND_DIR))
 
+try:
+    from dotenv import load_dotenv
+    load_dotenv(BACKEND_DIR / ".env")
+except ImportError:
+    pass
+
 from app.auth import (
     REGISTERED_ACTORS,
     authenticate_actor,
@@ -347,7 +353,7 @@ def test_live_workflow_sqlite_pair_verification() -> str:
 
     # 4. Independent Zero-Backend Verification against Coral Testnet RPC
     rpc_url = "https://coralrpc.mstblockchain.com"
-    contract_addr = os.getenv("CONTRACT_ADDRESS", "0xf8a978c5d5dfc258b5aefb4c3ea99b73615b7995")
+    contract_addr = os.getenv("CONTRACT_ADDRESS", "0xbafa85b0797d0a793a2c934d623f02588fe9770a")
     selector = "0xa1b416f9"  # reservations(bytes32)
 
     payload = json.dumps({
