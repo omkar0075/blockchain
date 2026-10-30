@@ -54,3 +54,4 @@ export function getInstitutionKeys() {
     labC: privateKeyToAccount(labCKey as `0x${string}`),
   };
 }
+
