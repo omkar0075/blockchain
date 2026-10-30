@@ -373,3 +373,4 @@ def test_handles_expired_capacity_locks():
         assert result.data["alternative_provider_id"] == "lab-c"
 
     asyncio.run(run())
+
