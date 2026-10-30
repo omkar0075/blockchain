@@ -844,4 +844,275 @@ describe("MEDwayReservation", async function () {
       assert.equal(res[9].toLowerCase(), requester.account.address.toLowerCase());
     });
   });
+
+  // =========================================================================
+  // Milestone: EIP-712 Gasless Meta-Transactions
+  // =========================================================================
+  describe("EIP-712 Gasless Meta-Transactions", function () {
+    async function getEip712Domain(medwayAddress: `0x${string}`) {
+      const chainId = await publicClient.getChainId();
+      return {
+        name: "MEDwayReservation",
+        version: "1",
+        chainId: Number(chainId),
+        verifyingContract: medwayAddress,
+      };
+    }
+
+    const reservationRequestTypes = {
+      ReservationRequest: [
+        { name: "requester", type: "address" },
+        { name: "provider", type: "address" },
+        { name: "resourceRef", type: "bytes32" },
+        { name: "expiresAt", type: "uint64" },
+        { name: "nonce", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    } as const;
+
+    const acceptRequestTypes = {
+      AcceptRequest: [
+        { name: "reservationId", type: "bytes32" },
+        { name: "provider", type: "address" },
+        { name: "nonce", type: "uint256" },
+        { name: "deadline", type: "uint256" },
+      ],
+    } as const;
+
+    it("Should allow a relayer to submit createReservationWithSig recording the hospital as requester", async function () {
+      const { medway } = await deployFixture();
+      const domain = await getEip712Domain(medway.address);
+
+      const now = BigInt(await networkHelpers.time.latest());
+      const expiresAt = now + 3600n;
+      const deadline = now + 1800n;
+      const nonce = await medway.read.nonces([requester.account.address]);
+
+      // Hospital A (requester) signs off-chain typed data
+      const signature = await requester.signTypedData({
+        domain,
+        types: reservationRequestTypes,
+        primaryType: "ReservationRequest",
+        message: {
+          requester: requester.account.address,
+          provider: provider.account.address,
+          resourceRef: sampleResourceRef,
+          expiresAt,
+          nonce,
+          deadline,
+        },
+      });
+
+      // Third party (relayer/backend) broadcasts transaction and pays gas
+      const txHash = await medway.write.createReservationWithSig(
+        [
+          requester.account.address,
+          provider.account.address,
+          sampleResourceRef,
+          expiresAt,
+          deadline,
+          signature,
+        ],
+        { account: thirdParty.account }
+      );
+
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+      const events = await publicClient.getContractEvents({
+        address: medway.address,
+        abi: medway.abi,
+        eventName: "ReservationCreated",
+        fromBlock: receipt.blockNumber,
+        strict: true,
+      });
+
+      const reservationId = (events[0] as any).args.reservationId as `0x${string}`;
+
+      // CRITICAL CHECK: The contract must record requester as the hospital, NOT thirdParty (relayer)
+      const res = await medway.read.reservations([reservationId]);
+      assert.equal(res[2].toLowerCase(), requester.account.address.toLowerCase());
+      assert.notEqual(res[2].toLowerCase(), thirdParty.account.address.toLowerCase());
+      assert.equal(res[3].toLowerCase(), provider.account.address.toLowerCase());
+      assert.equal(res[5], Status.Proposed);
+
+      // Nonce must have incremented
+      const nextNonce = await medway.read.nonces([requester.account.address]);
+      assert.equal(nextNonce, nonce + 1n);
+    });
+
+    it("Should reject createReservationWithSig if the signature is invalid or forged", async function () {
+      const { medway } = await deployFixture();
+      const domain = await getEip712Domain(medway.address);
+
+      const now = BigInt(await networkHelpers.time.latest());
+      const expiresAt = now + 3600n;
+      const deadline = now + 1800n;
+      const nonce = await medway.read.nonces([requester.account.address]);
+
+      // Forged: Third-party signs claiming to be requester
+      const badSignature = await thirdParty.signTypedData({
+        domain,
+        types: reservationRequestTypes,
+        primaryType: "ReservationRequest",
+        message: {
+          requester: requester.account.address,
+          provider: provider.account.address,
+          resourceRef: sampleResourceRef,
+          expiresAt,
+          nonce,
+          deadline,
+        },
+      });
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.createReservationWithSig(
+          [
+            requester.account.address,
+            provider.account.address,
+            sampleResourceRef,
+            expiresAt,
+            deadline,
+            badSignature,
+          ],
+          { account: thirdParty.account }
+        ),
+        medway,
+        "InvalidSignature"
+      );
+    });
+
+    it("Should reject createReservationWithSig if the deadline has passed", async function () {
+      const { medway } = await deployFixture();
+      const domain = await getEip712Domain(medway.address);
+
+      const now = BigInt(await networkHelpers.time.latest());
+      const expiresAt = now + 3600n;
+      const deadline = now + 50n;
+      const nonce = await medway.read.nonces([requester.account.address]);
+
+      const signature = await requester.signTypedData({
+        domain,
+        types: reservationRequestTypes,
+        primaryType: "ReservationRequest",
+        message: {
+          requester: requester.account.address,
+          provider: provider.account.address,
+          resourceRef: sampleResourceRef,
+          expiresAt,
+          nonce,
+          deadline,
+        },
+      });
+
+      // Advance time past signature deadline
+      await networkHelpers.time.increase(100n);
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.createReservationWithSig(
+          [
+            requester.account.address,
+            provider.account.address,
+            sampleResourceRef,
+            expiresAt,
+            deadline,
+            signature,
+          ],
+          { account: thirdParty.account }
+        ),
+        medway,
+        "SignatureExpired"
+      );
+    });
+
+    it("Should prevent signature replay attacks using nonces", async function () {
+      const { medway } = await deployFixture();
+      const domain = await getEip712Domain(medway.address);
+
+      const now = BigInt(await networkHelpers.time.latest());
+      const expiresAt = now + 3600n;
+      const deadline = now + 1800n;
+      const nonce = await medway.read.nonces([requester.account.address]);
+
+      const signature = await requester.signTypedData({
+        domain,
+        types: reservationRequestTypes,
+        primaryType: "ReservationRequest",
+        message: {
+          requester: requester.account.address,
+          provider: provider.account.address,
+          resourceRef: sampleResourceRef,
+          expiresAt,
+          nonce,
+          deadline,
+        },
+      });
+
+      // First submission succeeds
+      await medway.write.createReservationWithSig(
+        [
+          requester.account.address,
+          provider.account.address,
+          sampleResourceRef,
+          expiresAt,
+          deadline,
+          signature,
+        ],
+        { account: thirdParty.account }
+      );
+
+      // Replay attack: submitting the exact same signature must revert
+      await viem.assertions.revertWithCustomError(
+        medway.write.createReservationWithSig(
+          [
+            requester.account.address,
+            provider.account.address,
+            sampleResourceRef,
+            expiresAt,
+            deadline,
+            signature,
+          ],
+          { account: thirdParty.account }
+        ),
+        medway,
+        "InvalidSignature"
+      );
+    });
+
+    it("Should allow relayer to submit acceptReservationWithSig on behalf of provider", async function () {
+      const { medway } = await deployFixture();
+      const domain = await getEip712Domain(medway.address);
+
+      // Create initial proposal directly
+      const { reservationId } = await createSampleReservation(medway);
+
+      const now = BigInt(await networkHelpers.time.latest());
+      const deadline = now + 1800n;
+      const providerNonce = await medway.read.nonces([provider.account.address]);
+
+      // Provider signs off-chain
+      const acceptSig = await provider.signTypedData({
+        domain,
+        types: acceptRequestTypes,
+        primaryType: "AcceptRequest",
+        message: {
+          reservationId,
+          provider: provider.account.address,
+          nonce: providerNonce,
+          deadline,
+        },
+      });
+
+      // Relayer broadcasts acceptance
+      await viem.assertions.emit(
+        medway.write.acceptReservationWithSig(
+          [reservationId, deadline, acceptSig],
+          { account: thirdParty.account }
+        ),
+        medway,
+        "ReservationCommitted"
+      );
+
+      const res = await medway.read.reservations([reservationId]);
+      assert.equal(res[5], Status.Committed);
+    });
+  });
 });
