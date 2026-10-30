@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI_Python_3.11+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Viem](https://img.shields.io/badge/Web3_Bridge-Viem_v2.57-black?style=for-the-badge&logo=v&logoColor=white)](https://viem.sh)
 [![React 18](https://img.shields.io/badge/Frontend-React_18_Vite-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
-[![Hardhat Tests](https://img.shields.io/badge/Hardhat_Tests-86%2F86_Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white)](contracts/test)
+[![Hardhat Tests](https://img.shields.io/badge/Hardhat_Tests-89%2F89_Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white)](contracts/test)
 [![Verification Suite](https://img.shields.io/badge/System_Verification-8%2F8_Passing-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](backend/test-system-verification.py)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 
@@ -454,10 +454,10 @@ Running node:test tests
     Test 7: Dispute Resolution (6 tests)
     Milestone: Contract Security Checks (5 tests)
     EIP-712 Gasless Meta-Transactions (9 tests)
-    Institutional Identity Registry - Feature 2 (11 tests)
+    Institutional Identity Registry - Feature 2 (14 tests)
     Feature 2: Adversarial Multi-Party Authorization & Security Checks (13 tests)
 
-86 passing (3 solidity, 83 nodejs)
+89 passing (3 solidity, 86 nodejs)
 ```
 
 ---

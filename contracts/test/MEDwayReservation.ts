@@ -1662,6 +1662,83 @@ describe("MEDwayReservation", async function () {
       const [unknownId] = await medway.read.getInstitutionByWallet([thirdParty.account.address]);
       assert.equal(unknownId, zeroBytes32);
     });
+
+    it("Should allow owner to update an institution's role and emit InstitutionRoleUpdated event", async function () {
+      const { medway } = await deployFixture();
+
+      // Lab C initially starts as Provider (Role 2)
+      assert.equal(await medway.read.isRequesterWallet([provider.account.address]), false);
+      assert.equal(await medway.read.isProviderWallet([provider.account.address]), true);
+
+      // Owner upgrades Lab C's role to Both (Role 3)
+      const txHash = await medway.write.setInstitutionRole(
+        [labCId, InstitutionRole.Both],
+        { account: deployer.account }
+      );
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: txHash });
+
+      const logs = parseEventLogs({
+        abi: medway.abi,
+        logs: receipt.logs,
+        eventName: "InstitutionRoleUpdated",
+      });
+      assert.equal(logs.length, 1);
+      assert.equal(logs[0].args.institutionId, labCId);
+      assert.equal(logs[0].args.previousRole, InstitutionRole.Provider);
+      assert.equal(logs[0].args.newRole, InstitutionRole.Both);
+
+      // Lab C's wallet is now accredited as BOTH requester and provider!
+      assert.equal(await medway.read.isRequesterWallet([provider.account.address]), true);
+      assert.equal(await medway.read.isProviderWallet([provider.account.address]), true);
+    });
+
+    it("Should revert if non-owner attempts to update institution role", async function () {
+      const { medway } = await deployFixture();
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.setInstitutionRole(
+          [labCId, InstitutionRole.Both],
+          { account: thirdParty.account }
+        ),
+        medway,
+        "Unauthorized"
+      );
+    });
+
+    it("Should validate role updates (reject None, setting to same role, or unknown institution)", async function () {
+      const { medway } = await deployFixture();
+
+      // Reject setting to None
+      await viem.assertions.revertWithCustomError(
+        medway.write.setInstitutionRole(
+          [labCId, InstitutionRole.None],
+          { account: deployer.account }
+        ),
+        medway,
+        "InvalidRole"
+      );
+
+      // Reject setting to same role (already Provider)
+      await viem.assertions.revertWithCustomError(
+        medway.write.setInstitutionRole(
+          [labCId, InstitutionRole.Provider],
+          { account: deployer.account }
+        ),
+        medway,
+        "InvalidRole"
+      );
+
+      // Reject unknown institution ID
+      const fakeInstId = pad(stringToHex("nonexistent-hospital"), { size: 32 });
+      await viem.assertions.revertWithCustomError(
+        medway.write.setInstitutionRole(
+          [fakeInstId, InstitutionRole.Both],
+          { account: deployer.account }
+        ),
+        medway,
+        "InstitutionNotFound"
+      );
+    });
   });
 
   // =========================================================================

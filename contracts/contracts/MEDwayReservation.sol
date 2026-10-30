@@ -121,6 +121,11 @@ contract MEDwayReservation {
         bytes32 indexed institutionId,
         bool isActive
     );
+    event InstitutionRoleUpdated(
+        bytes32 indexed institutionId,
+        InstitutionRole previousRole,
+        InstitutionRole newRole
+    );
     event WalletAuthorized(
         bytes32 indexed institutionId,
         address indexed wallet,
@@ -153,6 +158,7 @@ contract MEDwayReservation {
     error InstitutionAlreadyExists();
     error InstitutionNotFound();
     error InstitutionInactive();
+    error InvalidRole();
     error WalletAlreadyAuthorized();
     error WalletNotAuthorized();
     error WalletAssignedToDifferentInstitution();
@@ -273,6 +279,20 @@ contract MEDwayReservation {
         if (!institutionExists[institutionId]) revert InstitutionNotFound();
         institutions[institutionId].isActive = isActive;
         emit InstitutionStatusChanged(institutionId, isActive);
+    }
+
+    /// @notice Update the accredited operational role of a registered institution.
+    /// @dev Allows owner to expand or alter an institution's capabilities (e.g. Provider -> Both).
+    function setInstitutionRole(bytes32 institutionId, InstitutionRole newRole) external onlyOwner {
+        if (!institutionExists[institutionId]) revert InstitutionNotFound();
+        if (newRole == InstitutionRole.None) revert InvalidRole();
+
+        Institution storage inst = institutions[institutionId];
+        InstitutionRole prevRole = inst.role;
+        if (prevRole == newRole) revert InvalidRole();
+
+        inst.role = newRole;
+        emit InstitutionRoleUpdated(institutionId, prevRole, newRole);
     }
 
     // -------------------------------------------------------------------
