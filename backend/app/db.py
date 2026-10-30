@@ -11,13 +11,13 @@ DB_PATH = DB_DIR / "medswarm.db"
 
 
 def get_connection() -> sqlite3.Connection:
-    conn = sqlite3.connect(str(DB_PATH))
+    conn = sqlite3.connect(str(DB_PATH), timeout=30.0)
     conn.row_factory = sqlite3.Row
     return conn
 
 
 def init_db() -> None:
-    """Initialize persistent SQLite tables for proposals, commitments, and immutable audit logs."""
+    """Initialize persistent SQLite tables for proposals, commitments, evidence vault, and audit logs."""
     with get_connection() as conn:
         cursor = conn.cursor()
 
@@ -77,7 +77,22 @@ def init_db() -> None:
             """
         )
 
-        # 3. Immutable Tamper-Evident Audit Log Table
+        # 3. Evidence Vault Table (stores off-chain raw clinical/operational documents)
+        cursor.execute(
+            """
+            CREATE TABLE IF NOT EXISTS evidence_vault (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                commitment_id TEXT NOT NULL,
+                evidence_type TEXT NOT NULL,
+                raw_document TEXT NOT NULL,
+                computed_sha256 TEXT NOT NULL,
+                submitted_by TEXT NOT NULL,
+                timestamp REAL NOT NULL
+            )
+            """
+        )
+
+        # 4. Immutable Tamper-Evident Audit Log Table
         cursor.execute(
             """
             CREATE TABLE IF NOT EXISTS audit_log (
@@ -216,6 +231,72 @@ def list_commitments() -> list[dict[str, Any]]:
         return [dict(r) for r in rows]
 
 
+def store_evidence(
+    commitment_id: str,
+    evidence_type: str,
+    raw_document: str,
+    submitted_by: str,
+) -> dict[str, Any]:
+    """Store raw off-chain evidence and compute its cryptographic SHA-256 digest."""
+    now = time.time()
+    computed_sha256 = "0x" + hashlib.sha256(raw_document.encode()).hexdigest()
+
+    with get_connection() as conn:
+        conn.execute(
+            """
+            INSERT INTO evidence_vault (
+                commitment_id, evidence_type, raw_document,
+                computed_sha256, submitted_by, timestamp
+            ) VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                commitment_id,
+                evidence_type,
+                raw_document,
+                computed_sha256,
+                submitted_by,
+                now,
+            ),
+        )
+        conn.commit()
+
+    return {
+        "commitment_id": commitment_id,
+        "evidence_type": evidence_type,
+        "raw_document": raw_document,
+        "computed_sha256": computed_sha256,
+        "submitted_by": submitted_by,
+        "timestamp": now,
+    }
+
+
+def get_evidence_records(commitment_id: str) -> list[dict[str, Any]]:
+    """Retrieve raw evidence records and independently recompute their SHA-256 hashes."""
+    with get_connection() as conn:
+        rows = conn.execute(
+            "SELECT * FROM evidence_vault WHERE commitment_id = ? ORDER BY id ASC",
+            (commitment_id,),
+        ).fetchall()
+
+        results = []
+        for r in rows:
+            raw_doc = r["raw_document"]
+            # Independently recompute hash to prove data has not been modified
+            recomputed = "0x" + hashlib.sha256(raw_doc.encode()).hexdigest()
+            results.append({
+                "id": r["id"],
+                "commitment_id": r["commitment_id"],
+                "evidence_type": r["evidence_type"],
+                "raw_document": raw_doc,
+                "stored_sha256": r["computed_sha256"],
+                "recomputed_sha256": recomputed,
+                "integrity_verified": recomputed.lower() == r["computed_sha256"].lower(),
+                "submitted_by": r["submitted_by"],
+                "timestamp": r["timestamp"],
+            })
+        return results
+
+
 def record_audit_event(
     action: str,
     actor: str,
@@ -280,10 +361,52 @@ def get_audit_trail(commitment_id: Optional[str] = None, limit: int = 100) -> li
                 "SELECT * FROM audit_log ORDER BY id DESC LIMIT ?",
                 (limit,),
             ).fetchall()
-        
+
         result = []
         for r in rows:
             d = dict(r)
             d["details"] = json.loads(d.pop("details_json"))
             result.append(d)
         return result
+
+
+def verify_audit_trail_integrity() -> dict[str, Any]:
+    """Walk the complete audit log from root to tip, verifying mathematical hash-chain continuity."""
+    with get_connection() as conn:
+        rows = conn.execute("SELECT * FROM audit_log ORDER BY id ASC").fetchall()
+        if not rows:
+            return {"valid": True, "total_records": 0, "message": "Audit log is empty"}
+
+        expected_prev = "0x0000000000000000000000000000000000000000000000000000000000000000"
+        for r in rows:
+            # 1. Check prev_hash linkage
+            if r["prev_hash"] != expected_prev:
+                return {
+                    "valid": False,
+                    "broken_at_id": r["id"],
+                    "error": "Broken chain linkage: prev_hash does not match previous event_hash",
+                    "expected_prev": expected_prev,
+                    "stored_prev": r["prev_hash"],
+                }
+
+            # 2. Recompute expected event_hash
+            raw = f"{r['prev_hash']}|{r['timestamp']}|{r['action']}|{r['actor']}|{r['role']}|{r['commitment_id']}|{r['details_json']}".encode()
+            computed_hash = "0x" + hashlib.sha256(raw).hexdigest()
+
+            if r["event_hash"] != computed_hash:
+                return {
+                    "valid": False,
+                    "broken_at_id": r["id"],
+                    "error": "Tampered record detected: event_hash does not match recomputed SHA-256 digest",
+                    "expected_hash": computed_hash,
+                    "stored_hash": r["event_hash"],
+                }
+
+            expected_prev = r["event_hash"]
+
+        return {
+            "valid": True,
+            "total_records": len(rows),
+            "root_event_hash": expected_prev,
+            "status": "Cryptographically verified & tamper-evident",
+        }

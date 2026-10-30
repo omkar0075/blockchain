@@ -8,6 +8,7 @@ from .agents import discover_and_verify, choose_offer
 from .auth import (
     ActorIdentity,
     authenticate_actor,
+    sync_arbitrator_with_contract_owner,
     verify_authorization_permission,
     verify_acceptance_permission,
     verify_fulfillment_permission,
@@ -30,8 +31,11 @@ from .db import (
     save_commitment,
     get_commitment,
     list_commitments as db_list_commitments,
+    store_evidence,
+    get_evidence_records,
     record_audit_event,
     get_audit_trail,
+    verify_audit_trail_integrity,
 )
 from .models import (
     ResourceRequest,
@@ -44,7 +48,7 @@ from .models import (
 app = FastAPI(
     title="MEDSWARM API",
     description="Autonomous healthcare resource coordination with Coral Testnet on-chain verification and tamper-evident audit trails.",
-    version="0.4.0",
+    version="0.5.0",
 )
 
 app.add_middleware(
@@ -105,6 +109,12 @@ def health():
     bc = get_blockchain_status()
     bc_connected = bool(bc.get("connected"))
     relayer_info = bc.get("relayer", {})
+    contract_owner = bc.get("contractOwner")
+
+    # Keep backend arbitrator address strictly synchronized with on-chain owner
+    if contract_owner:
+        sync_arbitrator_with_contract_owner(contract_owner)
+
     return {
         "status": "ok",
         "mode": "hybrid-autonomous-coordination",
@@ -114,6 +124,7 @@ def health():
             "network": bc.get("network", "Coral Testnet"),
             "chain_id": bc.get("chainId", 54635),
             "contract_address": bc.get("contractAddress"),
+            "contract_owner": contract_owner,
             "latest_block": bc.get("latestBlock"),
             "relayer_configured": relayer_info.get("configured", False),
             "relayer_address": relayer_info.get("address"),
@@ -130,10 +141,17 @@ def list_institutions():
 @app.post("/requests", response_model=AllocationProposal)
 def create_request(
     request: ResourceRequest,
-    actor: ActorIdentity = Depends(authenticate_actor),
+    x_actor_id: Optional[str] = Header(None, alias="X-Actor-Id"),
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
 ):
     if not any(i["id"] == request.requesting_institution_id for i in INSTITUTIONS):
         raise HTTPException(status_code=404, detail="Requesting institution not found")
+
+    actor = authenticate_actor(
+        x_actor_id=x_actor_id,
+        x_api_key=x_api_key,
+        default_actor_id=request.requesting_institution_id,
+    )
 
     offers = discover_and_verify(request)
     selected = choose_offer(request, offers)
@@ -151,7 +169,7 @@ def create_request(
     # Persist in SQLite
     save_proposal(payload)
 
-    # Record audit trail
+    # Record tamper-evident audit event
     record_audit_event(
         action="REQUEST_CREATED",
         actor=actor.id,
@@ -174,6 +192,7 @@ def authorize_proposal(
     proposal_id: str,
     approval: AuthorizationRequest,
     x_actor_id: Optional[str] = Header(None, alias="X-Actor-Id"),
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
 ):
     proposal = get_proposal(proposal_id)
     if not proposal:
@@ -181,8 +200,12 @@ def authorize_proposal(
 
     requester_id = proposal["request"]["requesting_institution_id"]
 
-    # RBAC Guard: authenticate actor and verify they belong to the requesting hospital
-    actor = authenticate_actor(x_actor_id=x_actor_id, default_actor_id=requester_id)
+    # RBAC Guard: authenticate actor and verify credentials
+    actor = authenticate_actor(
+        x_actor_id=x_actor_id,
+        x_api_key=x_api_key,
+        default_actor_id=requester_id,
+    )
     verify_authorization_permission(actor, requester_id)
 
     if not approval.approved:
@@ -275,6 +298,7 @@ def list_commitments():
 def accept_commitment(
     commitment_id: str,
     x_actor_id: Optional[str] = Header(None, alias="X-Actor-Id"),
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
 ):
     commitment = get_commitment(commitment_id)
     if not commitment:
@@ -282,8 +306,12 @@ def accept_commitment(
 
     provider_id = commitment.get("provider_id", "lab-c")
 
-    # RBAC Guard: verify caller is the designated provider
-    actor = authenticate_actor(x_actor_id=x_actor_id, default_actor_id=provider_id)
+    # RBAC Guard: verify caller is the designated provider with valid credentials
+    actor = authenticate_actor(
+        x_actor_id=x_actor_id,
+        x_api_key=x_api_key,
+        default_actor_id=provider_id,
+    )
     verify_acceptance_permission(actor, provider_id)
 
     reservation_id = commitment.get("onchain_reservation_id")
@@ -354,6 +382,7 @@ def get_commitment_onchain(commitment_id: str):
 def fulfill_commitment(
     commitment_id: str,
     x_actor_id: Optional[str] = Header(None, alias="X-Actor-Id"),
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
 ):
     commitment = get_commitment(commitment_id)
     if not commitment:
@@ -361,8 +390,12 @@ def fulfill_commitment(
 
     provider_id = commitment.get("provider_id", "lab-c")
 
-    # RBAC Guard: verify caller is the provider
-    actor = authenticate_actor(x_actor_id=x_actor_id, default_actor_id=provider_id)
+    # RBAC Guard: verify caller is the designated provider with valid credentials
+    actor = authenticate_actor(
+        x_actor_id=x_actor_id,
+        x_api_key=x_api_key,
+        default_actor_id=provider_id,
+    )
     verify_fulfillment_permission(actor, provider_id)
 
     _sync_commitment_from_chain(commitment)
@@ -429,6 +462,7 @@ def dispute_commitment(
     commitment_id: str,
     dispute: DisputeRequest,
     x_actor_id: Optional[str] = Header(None, alias="X-Actor-Id"),
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
 ):
     commitment = get_commitment(commitment_id)
     if not commitment:
@@ -437,8 +471,12 @@ def dispute_commitment(
     requester_id = commitment.get("requesting_institution_id", "hospital-a")
     provider_id = commitment.get("provider_id", "lab-c")
 
-    # RBAC Guard: actor must be requester or provider
-    actor = authenticate_actor(x_actor_id=x_actor_id, default_actor_id=dispute.disputed_by)
+    # RBAC Guard: actor must be requester or provider with valid credentials
+    actor = authenticate_actor(
+        x_actor_id=x_actor_id,
+        x_api_key=x_api_key,
+        default_actor_id=dispute.disputed_by,
+    )
     verify_dispute_permission(actor, requester_id, provider_id)
 
     _sync_commitment_from_chain(commitment)
@@ -454,11 +492,15 @@ def dispute_commitment(
     if not reservation_id:
         raise HTTPException(status_code=400, detail="Commitment has no on-chain reservation ID.")
 
-    # Evidence Integrity: Ensure deterministic SHA-256 hash
-    computed_evidence_hash = dispute.evidence_hash
-    if not computed_evidence_hash:
-        raw_evidence = f"{commitment_id}:{actor.id}:{dispute.reason}".encode()
-        computed_evidence_hash = "0x" + hashlib.sha256(raw_evidence).hexdigest()
+    # Evidence Integrity: Store raw document and compute cryptographic SHA-256 digest
+    raw_document = dispute.reason
+    stored_evidence = store_evidence(
+        commitment_id=commitment_id,
+        evidence_type="dispute_claim",
+        raw_document=raw_document,
+        submitted_by=actor.id,
+    )
+    computed_evidence_hash = stored_evidence["computed_sha256"]
 
     dispute_res = dispute_onchain_reservation(
         reservation_id=reservation_id,
@@ -497,6 +539,7 @@ def dispute_commitment(
     return {
         "status": "disputed",
         "commitment": commitment,
+        "evidence_record": stored_evidence,
         "blockchain": dispute_res,
     }
 
@@ -506,13 +549,18 @@ def resolve_dispute(
     commitment_id: str,
     resolution: ResolveDisputeRequest,
     x_actor_id: Optional[str] = Header(None, alias="X-Actor-Id"),
+    x_api_key: Optional[str] = Header(None, alias="X-Api-Key"),
 ):
     commitment = get_commitment(commitment_id)
     if not commitment:
         raise HTTPException(status_code=404, detail="Commitment not found")
 
-    # Critical Safeguard: Verify caller has role 'arbitrator' or 'admin'
-    actor = authenticate_actor(x_actor_id=x_actor_id, default_actor_id="consortium-arbitrator")
+    # Critical Safeguard: Verify caller has role 'arbitrator' or 'admin' and valid credentials
+    actor = authenticate_actor(
+        x_actor_id=x_actor_id,
+        x_api_key=x_api_key,
+        default_actor_id="consortium-arbitrator",
+    )
     verify_arbitration_permission(actor)
 
     _sync_commitment_from_chain(commitment)
@@ -528,11 +576,15 @@ def resolve_dispute(
     if not reservation_id:
         raise HTTPException(status_code=400, detail="Commitment has no on-chain reservation ID.")
 
-    # Evidence Integrity: Ensure deterministic resolution audit hash
-    computed_resolution_evidence = resolution.resolution_evidence
-    if not computed_resolution_evidence:
-        raw_evidence = f"RESOLVE:{commitment_id}:{actor.id}:{resolution.resolution}:{resolution.notes}".encode()
-        computed_resolution_evidence = "0x" + hashlib.sha256(raw_evidence).hexdigest()
+    # Evidence Integrity: Store formal arbitration findings and compute SHA-256
+    raw_findings = f"RESOLUTION: {resolution.resolution}\nFINDINGS: {resolution.notes}"
+    stored_resolution = store_evidence(
+        commitment_id=commitment_id,
+        evidence_type="arbitration_ruling",
+        raw_document=raw_findings,
+        submitted_by=actor.id,
+    )
+    computed_resolution_evidence = stored_resolution["computed_sha256"]
 
     resolve_res = resolve_onchain_dispute(
         reservation_id=reservation_id,
@@ -572,7 +624,23 @@ def resolve_dispute(
     return {
         "status": "resolved",
         "commitment": commitment,
+        "resolution_record": stored_resolution,
         "blockchain": resolve_res,
+    }
+
+
+@app.get("/commitments/{commitment_id}/evidence")
+def get_commitment_evidence(commitment_id: str):
+    """Retrieve all raw off-chain evidence documents and independently recompute their SHA-256 hashes."""
+    commitment = get_commitment(commitment_id)
+    if not commitment:
+        raise HTTPException(status_code=404, detail="Commitment not found")
+
+    records = get_evidence_records(commitment_id=commitment_id)
+    return {
+        "commitment_id": commitment_id,
+        "total_evidence_records": len(records),
+        "evidence": records,
     }
 
 
@@ -589,6 +657,12 @@ def get_commitment_audit_trail(commitment_id: str):
         "total_audit_events": len(events),
         "audit_trail": events,
     }
+
+
+@app.get("/audit/verify")
+def verify_audit_log_integrity():
+    """Verify cryptographic hash-chain continuity from genesis to latest event."""
+    return verify_audit_trail_integrity()
 
 
 @app.get("/audit")

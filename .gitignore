@@ -23,6 +23,7 @@ cache/
 coverage/
 .gas-snapshot/
 snapshots/
+*.tsbuildinfo
 
 # Environment files
 .env

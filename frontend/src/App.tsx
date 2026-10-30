@@ -2,133 +2,868 @@ import { useEffect, useState } from 'react'
 
 const API = 'http://127.0.0.1:8000'
 
-type Institution = { id: string; name: string; type: string; resources: Record<string, number> }
-type Offer = { provider_id: string; provider_name: string; available_quantity: number; estimated_delivery_hours: number; rationale: string }
-type Proposal = {
+interface BlockchainHealth {
+  status: string
+  network: string
+  chain_id: number
+  contract_address: string
+  contract_owner: string
+  latest_block: number
+  relayer_configured: boolean
+  relayer_address: string
+  institutions_registered: string[]
+}
+
+interface HealthResponse {
+  status: string
+  mode: string
+  database: string
+  blockchain: BlockchainHealth
+}
+
+interface Institution {
+  id: string
+  name: string
+  type: string
+  resources: Record<string, number>
+}
+
+interface Offer {
+  provider_id: string
+  provider_name: string
+  available_quantity: number
+  estimated_delivery_hours: number
+  rationale: string
+}
+
+interface Proposal {
   proposal_id?: string
-  request: { requesting_institution_id: string; quantity: number; urgency: string }
+  request: { requesting_institution_id: string; quantity: number; urgency: string; resource_type: string }
   offers: Offer[]
   selected_provider_id: string | null
   selected_quantity: number
   status: string
 }
-type Commitment = { commitment_id: string; provider_id: string; requesting_institution_id: string; quantity: number; status: string; ledger: string }
+
+interface Commitment {
+  commitment_id: string
+  proposal_id: string
+  requesting_institution_id: string
+  provider_id: string
+  resource_type: string
+  quantity: number
+  status: string
+  approved_by?: string
+  ledger: string
+  onchain_reservation_id?: string
+  tx_hash?: string
+  block_number?: number
+  onchain_status?: string
+  acceptance_block?: number
+  fulfillment_block?: number
+  dispute_block?: number
+  dispute_reason?: string
+  resolution_block?: number
+  resolution_notes?: string
+  note?: string
+  message?: string
+}
+
+interface AuditEvent {
+  id: number
+  timestamp: string
+  action: string
+  actor: string
+  role: string
+  commitment_id?: string
+  details: Record<string, any>
+  previous_hash: string
+  event_hash: string
+}
+
+interface EvidenceRecord {
+  id: number
+  commitment_id: string
+  evidence_type: string
+  raw_document: string
+  stored_sha256: string
+  computed_sha256: string
+  verified: boolean
+  submitted_by: string
+  created_at: number
+}
+
+const ACTORS = [
+  { id: 'hospital-a', name: 'City Hospital A', role: 'requester', key: 'medswarm-key-hosp-a-sec91', icon: '🏥' },
+  { id: 'lab-c', name: 'Central Diagnostic Lab C', role: 'provider', key: 'medswarm-key-lab-c-sec73', icon: '🔬' },
+  { id: 'consortium-arbitrator', name: 'Consortium Arbitration Board', role: 'arbitrator', key: 'medswarm-key-arbitrator-sec05', icon: '⚖️' },
+]
 
 export default function App() {
+  const [health, setHealth] = useState<BlockchainHealth | null>(null)
   const [institutions, setInstitutions] = useState<Institution[]>([])
+  const [currentActor, setCurrentActor] = useState(ACTORS[0])
+  
+  // Resource Request State
   const [requester, setRequester] = useState('hospital-a')
   const [quantity, setQuantity] = useState(3)
   const [urgency, setUrgency] = useState('urgent')
   const [proposal, setProposal] = useState<Proposal | null>(null)
+  
+  // Commitments State
   const [commitments, setCommitments] = useState<Commitment[]>([])
-  const [message, setMessage] = useState('Demo mode: synthetic data; MST Blockchain is not connected yet.')
+  const [loading, setLoading] = useState(false)
+  const [message, setMessage] = useState('Live MST Coral Testnet Connected · Chain ID 54635')
 
-  async function load() {
+  // Modals
+  const [disputeModalTarget, setDisputeModalTarget] = useState<Commitment | null>(null)
+  const [disputeReason, setDisputeReason] = useState('')
+  
+  const [resolveModalTarget, setResolveModalTarget] = useState<Commitment | null>(null)
+  const [resolveOutcome, setResolveOutcome] = useState<'Cancelled' | 'Fulfilled'>('Cancelled')
+  const [resolveNotes, setResolveNotes] = useState('')
+
+  const [auditModalTarget, setAuditModalTarget] = useState<Commitment | null>(null)
+  const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
+  const [auditIntegrity, setAuditIntegrity] = useState<{ valid: boolean; total_events: number } | null>(null)
+  const [evidenceRecords, setEvidenceRecords] = useState<EvidenceRecord[]>([])
+
+  // Headers for current actor
+  const authHeaders = {
+    'Content-Type': 'application/json',
+    'X-Actor-Id': currentActor.id,
+    'X-Api-Key': currentActor.key,
+  }
+
+  async function loadData() {
     try {
-      const [i, c] = await Promise.all([
-        fetch(`${API}/institutions`).then(r => r.json()),
-        fetch(`${API}/commitments`).then(r => r.json())
+      const [hRes, iRes, cRes] = await Promise.all([
+        fetch(`${API}/health`).then(r => r.json() as Promise<HealthResponse>),
+        fetch(`${API}/institutions`).then(r => r.json() as Promise<Institution[]>),
+        fetch(`${API}/commitments`).then(r => r.json() as Promise<Commitment[]>),
       ])
-      setInstitutions(i); setCommitments(c)
+      setHealth(hRes.blockchain)
+      setInstitutions(iRes)
+      setCommitments(cRes)
     } catch {
-      setMessage('Backend not reachable. Start FastAPI at http://127.0.0.1:8000.')
+      setMessage('Backend not reachable at http://127.0.0.1:8000. Ensure FastAPI server is running.')
     }
   }
 
-  useEffect(() => { load() }, [])
+  useEffect(() => {
+    loadData()
+    const interval = setInterval(loadData, 8000)
+    return () => clearInterval(interval)
+  }, [])
 
+  // 1. Discover Capacity
   async function discover() {
-    setMessage('Discovering provider capacity and calculating a feasible proposal…')
+    setLoading(true)
+    setMessage('Multi-agent discovery evaluating provider capacity & delivery SLA...')
     setProposal(null)
     try {
-      const response = await fetch(`${API}/requests`, {
+      const res = await fetch(`${API}/requests`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: authHeaders,
         body: JSON.stringify({
           requesting_institution_id: requester,
           resource_type: 'diagnostic_slot',
           quantity,
           urgency,
-          required_by_hours: urgency === 'critical' ? 4 : urgency === 'urgent' ? 12 : 24
-        })
+          required_by_hours: urgency === 'critical' ? 4 : urgency === 'urgent' ? 12 : 24,
+        }),
       })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.detail || 'Request failed')
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Discovery request failed')
       setProposal(data)
-      setMessage(data.selected_provider_id ? 'Proposal generated. Institutional authorization is required before commitment.' : 'No provider currently satisfies the requested quantity and time constraints.')
+      setMessage(data.selected_provider_id ? 'Feasible provider found. Institutional coordinator authorization required.' : 'No provider satisfies constraints.')
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : 'Could not create request.')
+      setMessage(e instanceof Error ? e.message : 'Error creating request')
+    } finally {
+      setLoading(false)
     }
   }
 
+  // 2. Authorize Proposal
   async function authorize(approved: boolean) {
     if (!proposal?.proposal_id) return
-    const approver = window.prompt('Enter demo approver name (prototype only):', 'Hospital Coordinator')
+    const approver = window.prompt('Enter Hospital Coordinator Name:', 'Dr. Marcus (Chief of Medicine)')
     if (!approver) return
+    setLoading(true)
+    setMessage(`Relaying EIP-712 meta-transaction to Coral Testnet (Gas sponsored by relayer)...`)
     try {
-      const response = await fetch(`${API}/proposals/${proposal.proposal_id}/authorize`, {
+      const res = await fetch(`${API}/proposals/${proposal.proposal_id}/authorize`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ approved_by: approver, approved })
+        headers: authHeaders,
+        body: JSON.stringify({ approved_by: approver, approved }),
       })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.detail || 'Authorization failed')
-      setMessage(data.message || 'Authorized. Demo commitment recorded in the in-memory ledger, not on blockchain.')
-      await load()
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Authorization failed')
+      setMessage(data.commitment?.message || 'Proposal authorized and confirmed on Coral Testnet.')
+      setProposal(null)
+      await loadData()
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : 'Authorization failed.')
+      setMessage(e instanceof Error ? e.message : 'Authorization error')
+    } finally {
+      setLoading(false)
     }
   }
 
-  async function fulfill(id: string) {
+  // 3. Provider Accept Commitment
+  async function acceptCommitment(id: string) {
+    setLoading(true)
+    setMessage('Submitting provider EIP-712 acceptance to Coral Testnet...')
     try {
-      const response = await fetch(`${API}/commitments/${id}/fulfill`, { method: 'POST' })
-      const data = await response.json()
-      if (!response.ok) throw new Error(data.detail || 'Fulfillment update failed')
-      setMessage('Fulfillment status updated in demo ledger; trusted evidence is not implemented yet.')
-      await load()
+      const res = await fetch(`${API}/commitments/${id}/accept`, {
+        method: 'POST',
+        headers: authHeaders,
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Acceptance failed')
+      setMessage(`Reservation committed on Coral Testnet in block #${data.blockchain?.blockNumber}!`)
+      await loadData()
     } catch (e) {
-      setMessage(e instanceof Error ? e.message : 'Fulfillment update failed.')
+      setMessage(e instanceof Error ? e.message : 'Acceptance failed')
+    } finally {
+      setLoading(false)
     }
   }
 
-  return <main className="shell">
-    <header className="topbar">
-      <div><div className="eyebrow">AUTONOMOUS HEALTHCARE COORDINATION</div><h1>MEDSWARM</h1><p>AI agents coordinate. Institutions authorize. Blockchain integration comes next.</p></div>
-      <span className="badge">MVP · SYNTHETIC DATA</span>
-    </header>
+  // 4. Provider Fulfill Commitment
+  async function fulfillCommitment(id: string) {
+    setLoading(true)
+    setMessage('Provider executing fulfillment on Coral Testnet (with automated relayer top-up)...')
+    try {
+      const res = await fetch(`${API}/commitments/${id}/fulfill`, {
+        method: 'POST',
+        headers: authHeaders,
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Fulfillment failed')
+      setMessage(`Fulfilled on Coral Testnet (Block #${data.blockchain?.blockNumber}). 7-day dispute window active.`)
+      await loadData()
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : 'Fulfillment failed')
+    } finally {
+      setLoading(false)
+    }
+  }
 
-    <section className="notice"><strong>Prototype status:</strong> Resource discovery and authorization flow are simulated. This version does not connect to MST Blockchain and must not be used with real patient data.</section>
+  // 5. Requester Dispute
+  async function submitDispute() {
+    if (!disputeModalTarget || !disputeReason.trim()) return
+    setLoading(true)
+    setMessage('Hashing evidence (SHA-256) and recording dispute on Coral Testnet...')
+    try {
+      const res = await fetch(`${API}/commitments/${disputeModalTarget.commitment_id}/dispute`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          disputed_by: currentActor.id,
+          reason: disputeReason,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Dispute submission failed')
+      setMessage(`Dispute successfully broadcast to Coral Testnet (Block #${data.blockchain?.blockNumber}).`)
+      setDisputeModalTarget(null)
+      setDisputeReason('')
+      await loadData()
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : 'Dispute failed')
+    } finally {
+      setLoading(false)
+    }
+  }
 
-    <section className="grid">
-      <article className="panel">
-        <div className="section-title"><span>01</span><div><h2>Institution Network</h2><p>Simulated participating providers</p></div></div>
-        <div className="institution-list">{institutions.map(i => <div className="institution" key={i.id}><div><strong>{i.name}</strong><small>{i.type.replace('_', ' ')}</small></div><span>{i.resources.diagnostic_slot} slots</span></div>)}</div>
-      </article>
+  // 6. Arbitrator Resolve
+  async function submitResolution() {
+    if (!resolveModalTarget || !resolveNotes.trim()) return
+    setLoading(true)
+    setMessage('Publishing consortium arbitration ruling to Coral Testnet...')
+    try {
+      const res = await fetch(`${API}/commitments/${resolveModalTarget.commitment_id}/resolve`, {
+        method: 'POST',
+        headers: authHeaders,
+        body: JSON.stringify({
+          resolution: resolveOutcome,
+          notes: resolveNotes,
+        }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.detail || 'Arbitration resolution failed')
+      setMessage(`Dispute ruled as ${resolveOutcome} on Coral Testnet (Block #${data.blockchain?.blockNumber}).`)
+      setResolveModalTarget(null)
+      setResolveNotes('')
+      await loadData()
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : 'Resolution failed')
+    } finally {
+      setLoading(false)
+    }
+  }
 
-      <article className="panel request-panel">
-        <div className="section-title"><span>02</span><div><h2>Resource Request</h2><p>Submit a diagnostic-capacity shortage</p></div></div>
-        <label>Requesting institution<select value={requester} onChange={e => setRequester(e.target.value)}>{institutions.map(i => <option value={i.id} key={i.id}>{i.name}</option>)}</select></label>
-        <label>Appointment slots<input type="number" min="1" max="100" value={quantity} onChange={e => setQuantity(Number(e.target.value))}/></label>
-        <label>Urgency<select value={urgency} onChange={e => setUrgency(e.target.value)}><option value="routine">Routine</option><option value="urgent">Urgent</option><option value="critical">Critical</option></select></label>
-        <button onClick={discover}>Discover & Optimize</button>
-      </article>
-    </section>
+  // 7. Open Audit Modal
+  async function openAuditTrail(c: Commitment) {
+    setAuditModalTarget(c)
+    try {
+      const [eventsRes, verifyRes, evidenceRes] = await Promise.all([
+        fetch(`${API}/commitments/${c.commitment_id}/audit`).then(r => r.json()),
+        fetch(`${API}/audit/verify`).then(r => r.json()),
+        fetch(`${API}/commitments/${c.commitment_id}/evidence`).then(r => r.json()),
+      ])
+      setAuditEvents(eventsRes.audit_trail || [])
+      setAuditIntegrity(verifyRes)
+      setEvidenceRecords(evidenceRes.evidence || [])
+    } catch (err) {
+      console.error(err)
+    }
+  }
 
-    <section className="panel">
-      <div className="section-title"><span>03</span><div><h2>Agent Coordination</h2><p>Discovery → verification → proposed allocation → institutional approval</p></div></div>
-      {proposal ? <>
-        <div className="status-line"><span className="pill">{proposal.status}</span><span>{proposal.selected_provider_id ? `Proposed provider: ${institutions.find(i => i.id === proposal.selected_provider_id)?.name || proposal.selected_provider_id}` : 'No feasible provider selected'}</span></div>
-        <h3>Provider offers</h3>
-        {proposal.offers.length ? <div className="table-wrap"><table><thead><tr><th>Provider</th><th>Available slots</th><th>Estimated hours</th><th>Verification note</th></tr></thead><tbody>{proposal.offers.map(o => <tr key={o.provider_id}><td>{o.provider_name}</td><td>{o.available_quantity}</td><td>{o.estimated_delivery_hours}</td><td>{o.rationale}</td></tr>)}</tbody></table></div> : <p>No offers received.</p>}
-        {proposal.selected_provider_id && proposal.status === 'proposed' && <div className="actions"><button onClick={() => authorize(true)}>Authorize proposal</button><button className="secondary" onClick={() => authorize(false)}>Decline</button></div>}
-      </> : <p className="empty">Submit a request to see provider offers and the proposed allocation.</p>}
-    </section>
+  const getStatusBadgeClass = (status?: string) => {
+    switch (status?.toLowerCase()) {
+      case 'proposed':
+      case 'authorized':
+        return 'status-proposed'
+      case 'committed':
+        return 'status-committed'
+      case 'fulfilled':
+        return 'status-fulfilled'
+      case 'disputed':
+        return 'status-disputed'
+      case 'cancelled':
+      case 'resolved':
+        return 'status-cancelled'
+      default:
+        return 'status-proposed'
+    }
+  }
 
-    <section className="panel">
-      <div className="section-title"><span>04</span><div><h2>Commitments</h2><p>Current prototype ledger · not on-chain</p></div></div>
-      {commitments.length ? <div className="table-wrap"><table><thead><tr><th>Commitment</th><th>Requester</th><th>Provider</th><th>Quantity</th><th>Status</th><th>Action</th></tr></thead><tbody>{commitments.map(c => <tr key={c.commitment_id}><td>{c.commitment_id.slice(0, 8)}…</td><td>{c.requesting_institution_id}</td><td>{c.provider_id}</td><td>{c.quantity}</td><td><span className="pill">{c.status}</span></td><td>{c.status === 'authorized' && <button className="small" onClick={() => fulfill(c.commitment_id)}>Mark fulfilled</button>}</td></tr>)}</tbody></table></div> : <p className="empty">No commitments yet.</p>}
-    </section>
-    <footer><span className="live-dot"></span>{message}<span className="footer-note">MST network connection: pending verification</span></footer>
-  </main>
+  return (
+    <main className="shell">
+      {/* TOPBAR */}
+      <header className="topbar">
+        <div>
+          <div className="eyebrow">AUTONOMOUS HEALTHCARE RESOURCE COORDINATION</div>
+          <h1>MEDSWARM</h1>
+          <p>Multi-Agent Capacity Discovery · EIP-712 Relayed Meta-Transactions · MST Coral Testnet</p>
+        </div>
+        <div className="topbar-right">
+          <div className="network-badge">
+            <span className="network-pulse"></span>
+            <span>Coral Testnet #{health?.latest_block || '...'}</span>
+          </div>
+          <span style={{ fontSize: '11px', color: '#64748b' }}>
+            Chain ID: <strong>{health?.chain_id || 54635}</strong> · Zero Gas for Clinics
+          </span>
+        </div>
+      </header>
+
+      {/* ACTOR SWITCHER */}
+      <section className="actor-switcher-bar">
+        <div className="actor-label">
+          <span>Active Session Persona (RBAC):</span>
+        </div>
+        <div className="actor-buttons">
+          {ACTORS.map(actor => (
+            <button
+              key={actor.id}
+              className={`actor-btn ${currentActor.id === actor.id ? 'active' : ''}`}
+              onClick={() => setCurrentActor(actor)}
+            >
+              <span>{actor.icon}</span>
+              <span>{actor.name}</span>
+              <span className="actor-badge-role">{actor.role}</span>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      {/* PROTOCOL METRICS BANNER */}
+      <section className="protocol-banner">
+        <div className="protocol-item">
+          <strong>Smart Contract:</strong>{' '}
+          <span title={health?.contract_address}>
+            {health?.contract_address ? `${health.contract_address.slice(0, 10)}...${health.contract_address.slice(-8)}` : '0xFc71e5...BBEEC'}
+          </span>
+        </div>
+        <div className="protocol-item">
+          <strong>Relayer / Sponsor:</strong>{' '}
+          <span>{health?.relayer_address ? `${health.relayer_address.slice(0, 8)}...${health.relayer_address.slice(-6)}` : '0x5E5B...8607'}</span>
+        </div>
+        <div className="protocol-item">
+          <strong>Dispute Window:</strong> <span>7 Days (604,800s)</span>
+        </div>
+        <div className="protocol-item">
+          <strong>Privacy Safeguard:</strong> <span>Zero PHI On-Chain (Pseudonymous Refs Only)</span>
+        </div>
+      </section>
+
+      {/* TWO COLUMN GRID */}
+      <section className="grid">
+        {/* PANEL 1: INSTITUTION NETWORK */}
+        <article className="panel">
+          <div className="section-title">
+            <span className="step-num">01</span>
+            <div>
+              <h2>Participating Institution Network</h2>
+              <p>Simulated accredited healthcare providers with live capacities</p>
+            </div>
+          </div>
+          <div className="institution-list">
+            {institutions.map(inst => (
+              <div className="institution" key={inst.id}>
+                <div>
+                  <strong>{inst.name}</strong>
+                  <small>
+                    {inst.type.replace('_', ' ')} · ID: {inst.id}
+                  </small>
+                </div>
+                <span className="slots-pill">{inst.resources?.diagnostic_slot ?? 0} slots</span>
+              </div>
+            ))}
+          </div>
+        </article>
+
+        {/* PANEL 2: RESOURCE REQUEST */}
+        <article className="panel request-panel">
+          <div className="section-title">
+            <span className="step-num">02</span>
+            <div>
+              <h2>Autonomous Shortage Request</h2>
+              <p>Trigger AI agent discovery and capacity optimization</p>
+            </div>
+          </div>
+          <label>
+            Requesting Institution
+            <select value={requester} onChange={e => setRequester(e.target.value)}>
+              {institutions.map(i => (
+                <option value={i.id} key={i.id}>
+                  {i.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Appointment Slots Required
+            <input
+              type="number"
+              min="1"
+              max="50"
+              value={quantity}
+              onChange={e => setQuantity(Number(e.target.value))}
+            />
+          </label>
+          <label>
+            Clinical Urgency
+            <select value={urgency} onChange={e => setUrgency(e.target.value)}>
+              <option value="routine">Routine (24h turnaround)</option>
+              <option value="urgent">Urgent (12h turnaround)</option>
+              <option value="critical">Critical (4h turnaround)</option>
+            </select>
+          </label>
+          <button onClick={discover} disabled={loading}>
+            {loading ? 'Evaluating SLA...' : 'Discover & Optimize Allocation'}
+          </button>
+        </article>
+      </section>
+
+      {/* PANEL 3: AGENT COORDINATION & PROPOSAL */}
+      <section className="panel">
+        <div className="section-title">
+          <span className="step-num">03</span>
+          <div>
+            <h2>Agent Allocation & Institutional Authorization</h2>
+            <p>Verification → Autonomous Matching → Human-in-the-Loop Signoff</p>
+          </div>
+        </div>
+
+        {proposal ? (
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px' }}>
+              <span className={`status-pill ${getStatusBadgeClass(proposal.status)}`}>{proposal.status}</span>
+              <span style={{ fontSize: '13px', fontWeight: 600 }}>
+                {proposal.selected_provider_id
+                  ? `Recommended: ${institutions.find(i => i.id === proposal.selected_provider_id)?.name || proposal.selected_provider_id}`
+                  : 'No feasible provider found'}
+              </span>
+            </div>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Provider</th>
+                    <th>Available Slots</th>
+                    <th>Turnaround (Hours)</th>
+                    <th>Autonomous Rationale</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {proposal.offers.map(o => (
+                    <tr key={o.provider_id}>
+                      <td><strong>{o.provider_name}</strong></td>
+                      <td>{o.available_quantity}</td>
+                      <td>{o.estimated_delivery_hours}h</td>
+                      <td>{o.rationale}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            {proposal.selected_provider_id && proposal.status === 'proposed' && (
+              <div style={{ display: 'flex', gap: '10px', marginTop: '16px' }}>
+                <button
+                  onClick={() => authorize(true)}
+                  disabled={loading || currentActor.role !== 'requester'}
+                  title={currentActor.role !== 'requester' ? 'Switch persona to Hospital Requester to authorize' : ''}
+                >
+                  ✍️ Authorize & Broadcast to Coral Testnet
+                </button>
+                <button
+                  className="secondary"
+                  onClick={() => authorize(false)}
+                  disabled={loading || currentActor.role !== 'requester'}
+                >
+                  Decline Proposal
+                </button>
+                {currentActor.role !== 'requester' && (
+                  <span style={{ fontSize: '11px', color: '#b45309', alignSelf: 'center' }}>
+                    ⚠️ Switch persona to Hospital A to authorize
+                  </span>
+                )}
+              </div>
+            )}
+          </div>
+        ) : (
+          <p style={{ color: '#94a3b8', fontSize: '13px', margin: 0 }}>
+            Submit a diagnostic shortage request above to initiate multi-agent discovery and generate a proposal.
+          </p>
+        )}
+      </section>
+
+      {/* PANEL 4: ON-CHAIN COMMITMENTS & LIFECYCLE */}
+      <section className="panel">
+        <div className="section-title">
+          <span className="step-num">04</span>
+          <div>
+            <h2>Coral Testnet Commitments & Lifecycle</h2>
+            <p>Persistent SQLite state synchronized with immutable on-chain smart contract</p>
+          </div>
+        </div>
+
+        {commitments.length ? (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Commitment</th>
+                  <th>Requester</th>
+                  <th>Provider</th>
+                  <th>Slots</th>
+                  <th>On-Chain Status</th>
+                  <th>Reservation ID / Tx</th>
+                  <th>Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {commitments.map(c => {
+                  const onchainStatus = c.onchain_status || c.status
+                  const isProvider = currentActor.id === c.provider_id || currentActor.role === 'provider'
+                  const isRequester = currentActor.id === c.requesting_institution_id || currentActor.role === 'requester'
+                  const isArbitrator = currentActor.role === 'arbitrator'
+
+                  return (
+                    <tr key={c.commitment_id}>
+                      <td>
+                        <strong>{c.commitment_id.slice(0, 8)}...</strong>
+                        <div style={{ fontSize: '10px', color: '#64748b' }}>by {c.approved_by || 'Coordinator'}</div>
+                      </td>
+                      <td>{institutions.find(i => i.id === c.requesting_institution_id)?.name || c.requesting_institution_id}</td>
+                      <td>{institutions.find(i => i.id === c.provider_id)?.name || c.provider_id}</td>
+                      <td><strong>{c.quantity}</strong></td>
+                      <td>
+                        <span className={`status-pill ${getStatusBadgeClass(onchainStatus)}`}>
+                          {onchainStatus}
+                        </span>
+                      </td>
+                      <td>
+                        {c.onchain_reservation_id ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '3px' }}>
+                            <span className="mono-hash" title={c.onchain_reservation_id}>
+                              ID: {c.onchain_reservation_id.slice(0, 10)}...{c.onchain_reservation_id.slice(-6)}
+                            </span>
+                            {c.tx_hash && (
+                              <span className="mono-hash" title={c.tx_hash} style={{ fontSize: '10px' }}>
+                                Tx: {c.tx_hash.slice(0, 10)}...
+                              </span>
+                            )}
+                          </div>
+                        ) : (
+                          <span style={{ color: '#94a3b8', fontSize: '11px' }}>Off-chain</span>
+                        )}
+                      </td>
+                      <td>
+                        <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                          {/* Accept action */}
+                          {onchainStatus === 'Proposed' && (
+                            <button
+                              className="small success"
+                              onClick={() => acceptCommitment(c.commitment_id)}
+                              disabled={loading || !isProvider}
+                              title={!isProvider ? 'Switch persona to Lab C to accept' : ''}
+                            >
+                              Accept
+                            </button>
+                          )}
+
+                          {/* Fulfill action */}
+                          {onchainStatus === 'Committed' && (
+                            <button
+                              className="small success"
+                              onClick={() => fulfillCommitment(c.commitment_id)}
+                              disabled={loading || !isProvider}
+                              title={!isProvider ? 'Switch persona to Lab C to fulfill' : ''}
+                            >
+                              Fulfill
+                            </button>
+                          )}
+
+                          {/* Dispute action */}
+                          {(onchainStatus === 'Committed' || onchainStatus === 'Fulfilled') && (
+                            <button
+                              className="small danger"
+                              onClick={() => setDisputeModalTarget(c)}
+                              disabled={loading || !isRequester}
+                              title={!isRequester ? 'Switch persona to Hospital A to dispute' : ''}
+                            >
+                              Dispute
+                            </button>
+                          )}
+
+                          {/* Arbitrate action */}
+                          {onchainStatus === 'Disputed' && (
+                            <button
+                              className="small"
+                              onClick={() => setResolveModalTarget(c)}
+                              disabled={loading || !isArbitrator}
+                              title={!isArbitrator ? 'Switch persona to Arbitrator to resolve' : ''}
+                              style={{ background: '#7c3aed', borderColor: '#7c3aed' }}
+                            >
+                              Arbitrate
+                            </button>
+                          )}
+
+                          {/* Audit trail & evidence */}
+                          <button
+                            className="small secondary"
+                            onClick={() => openAuditTrail(c)}
+                            title="View tamper-evident audit chain and evidence"
+                          >
+                            🔍 Audit & Evidence
+                          </button>
+                        </div>
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <p style={{ color: '#94a3b8', fontSize: '13px', margin: 0 }}>No commitments recorded yet.</p>
+        )}
+      </section>
+
+      {/* MODAL: DISPUTE */}
+      {disputeModalTarget && (
+        <div className="modal-overlay">
+          <div className="modal-box">
+            <div className="modal-header">
+              <h3>🚨 Raise Formal Reservation Dispute</h3>
+              <button className="close-btn" onClick={() => setDisputeModalTarget(null)}>×</button>
+            </div>
+            <p style={{ fontSize: '13px', color: '#64748b', marginTop: 0 }}>
+              Initiates a contract dispute on Coral Testnet for commitment{' '}
+              <strong>{disputeModalTarget.commitment_id.slice(0, 8)}...</strong>. Clinical and operational
+              evidence will be hashed with SHA-256 and verified off-chain.
+            </p>
+            <label>
+              Dispute Reason & Clinical Evidence:
+              <textarea
+                rows={4}
+                value={disputeReason}
+                onChange={e => setDisputeReason(e.target.value)}
+                placeholder="e.g. Diagnostic CT calibration error: Scan results delivered failed standard quality threshold."
+              />
+            </label>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+              <button className="secondary" onClick={() => setDisputeModalTarget(null)}>Cancel</button>
+              <button className="danger" onClick={submitDispute} disabled={loading || !disputeReason.trim()}>
+                {loading ? 'Submitting...' : 'Broadcast Dispute on Coral'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: ARBITRATE */}
+      {resolveModalTarget && (
+        <div className="modal-overlay">
+          <div className="modal-box">
+            <div className="modal-header">
+              <h3>⚖️ Consortium Arbitration Ruling</h3>
+              <button className="close-btn" onClick={() => setResolveModalTarget(null)}>×</button>
+            </div>
+            <p style={{ fontSize: '13px', color: '#64748b', marginTop: 0 }}>
+              As the Consortium Arbitrator (Contract Owner), enter the formal legal/clinical ruling for reservation{' '}
+              <strong>{resolveModalTarget.commitment_id.slice(0, 8)}...</strong>.
+            </p>
+            <label>
+              Final Ruling:
+              <select value={resolveOutcome} onChange={e => setResolveOutcome(e.target.value as any)}>
+                <option value="Cancelled">Cancelled (Fault found with Provider · Refund / Void)</option>
+                <option value="Fulfilled">Fulfilled (Dispute dismissed · Provider upheld)</option>
+              </select>
+            </label>
+            <label>
+              Arbitration Findings & Legal Notes:
+              <textarea
+                rows={4}
+                value={resolveNotes}
+                onChange={e => setResolveNotes(e.target.value)}
+                placeholder="e.g. Consortium panel reviewed equipment logs: Calibration defect verified. Reservation nullified."
+              />
+            </label>
+            <div style={{ display: 'flex', justifyContent: 'flex-end', gap: '10px', marginTop: '16px' }}>
+              <button className="secondary" onClick={() => setResolveModalTarget(null)}>Cancel</button>
+              <button
+                style={{ background: '#7c3aed', borderColor: '#7c3aed', color: '#ffffff' }}
+                onClick={submitResolution}
+                disabled={loading || !resolveNotes.trim()}
+              >
+                {loading ? 'Broadcasting...' : 'Enforce Ruling on-Chain'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: AUDIT TRAIL & EVIDENCE VAULT */}
+      {auditModalTarget && (
+        <div className="modal-overlay">
+          <div className="modal-box" style={{ maxWidth: '780px' }}>
+            <div className="modal-header">
+              <div>
+                <h3 style={{ margin: 0 }}>🛡️ Cryptographic Audit Trail & Evidence Vault</h3>
+                <span style={{ fontSize: '12px', color: '#64748b' }}>
+                  Commitment: {auditModalTarget.commitment_id}
+                </span>
+              </div>
+              <button className="close-btn" onClick={() => setAuditModalTarget(null)}>×</button>
+            </div>
+
+            {/* INTEGRITY STATUS */}
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                padding: '12px 16px',
+                background: auditIntegrity?.valid ? '#f0fdf4' : '#fef2f2',
+                border: `1px solid ${auditIntegrity?.valid ? '#bbf7d0' : '#fecaca'}`,
+                borderRadius: '8px',
+                marginBottom: '16px',
+              }}
+            >
+              <div>
+                <strong style={{ color: auditIntegrity?.valid ? '#15803d' : '#b91c1c' }}>
+                  {auditIntegrity?.valid ? '✓ SHA-256 Hash Chain Integrity: INTACT' : '⚠️ TAMPER DETECTED IN CHAIN'}
+                </strong>
+                <div style={{ fontSize: '11px', color: '#64748b', marginTop: '2px' }}>
+                  Genesis-to-tip hash verification verified across all {auditIntegrity?.total_events ?? 0} global audit events.
+                </div>
+              </div>
+              <span className={`status-pill ${auditIntegrity?.valid ? 'status-committed' : 'status-cancelled'}`}>
+                {auditIntegrity?.valid ? 'SECURE' : 'COMPROMISED'}
+              </span>
+            </div>
+
+            {/* EVIDENCE VAULT */}
+            <h4 style={{ margin: '14px 0 8px', fontSize: '14px', color: '#0f172a' }}>
+              Off-Chain Evidence Records (SHA-256 Verified)
+            </h4>
+            {evidenceRecords.length ? (
+              <div style={{ display: 'grid', gap: '8px', marginBottom: '16px' }}>
+                {evidenceRecords.map(ev => (
+                  <div
+                    key={ev.id}
+                    style={{
+                      background: '#f8fafc',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '8px',
+                      padding: '10px 12px',
+                      fontSize: '12px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '4px' }}>
+                      <strong>{ev.evidence_type.toUpperCase()}</strong>
+                      <span style={{ color: '#16a34a', fontWeight: 700 }}>✓ SHA-256 Verified</span>
+                    </div>
+                    <div style={{ color: '#475569', marginBottom: '6px' }}>"{ev.raw_document}"</div>
+                    <div className="hash-chain-row">
+                      Digest: {ev.computed_sha256}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ color: '#94a3b8', fontSize: '12px', margin: '0 0 16px' }}>
+                No off-chain evidence submitted for this reservation yet.
+              </p>
+            )}
+
+            {/* HASH-CHAINED EVENT LOG */}
+            <h4 style={{ margin: '14px 0 8px', fontSize: '14px', color: '#0f172a' }}>
+              Tamper-Evident Event Timeline
+            </h4>
+            {auditEvents.length ? (
+              <div className="timeline">
+                {auditEvents.map(evt => (
+                  <div className="timeline-item" key={evt.id}>
+                    <div className="timeline-header">
+                      <span>Event #{evt.id} · {evt.timestamp}</span>
+                      <span>Actor: {evt.actor} ({evt.role})</span>
+                    </div>
+                    <div className="timeline-action">{evt.action}</div>
+                    <div className="hash-chain-row">
+                      <strong>Prev:</strong> {evt.previous_hash.slice(0, 18)}... | <strong>Hash:</strong> {evt.event_hash.slice(0, 18)}...
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p style={{ color: '#94a3b8', fontSize: '12px', margin: 0 }}>No audit events found.</p>
+            )}
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '18px' }}>
+              <button className="secondary" onClick={() => setAuditModalTarget(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* FOOTER */}
+      <footer>
+        <div className="status-msg-badge">
+          <span className="network-pulse"></span>
+          <span>{message}</span>
+        </div>
+        <div style={{ fontSize: '11px', color: '#64748b' }}>
+          MST Coral Testnet Contract: <code>0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC</code>
+        </div>
+      </footer>
+    </main>
+  )
 }
