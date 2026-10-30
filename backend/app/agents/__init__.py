@@ -1,5 +1,6 @@
 import logging
 from .base import BaseAgent
+from .context import AgentContext
 from ..blockchain import get_onchain_capacity
 from ..data import INSTITUTIONS
 from ..models import ResourceRequest, AllocationOffer
