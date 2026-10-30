@@ -108,3 +108,45 @@ def fulfill_onchain_reservation(
         "--provider",
         provider,
     ])
+
+
+def dispute_onchain_reservation(
+    reservation_id: str,
+    actor: str = "hospital-a",
+    reason: Optional[str] = None,
+    evidence_hash: Optional[str] = None,
+) -> dict[str, Any]:
+    """Raise an on-chain dispute against a committed or fulfilled reservation."""
+    cmd = [
+        "dispute",
+        "--reservationId",
+        reservation_id,
+        "--actor",
+        actor,
+    ]
+    if evidence_hash:
+        cmd.extend(["--evidenceHash", evidence_hash])
+    if reason:
+        cmd.extend(["--reason", reason])
+    return _run_node_command(cmd)
+
+
+def resolve_onchain_dispute(
+    reservation_id: str,
+    resolution: str = "Cancelled",
+    notes: Optional[str] = None,
+    resolution_evidence: Optional[str] = None,
+) -> dict[str, Any]:
+    """Resolve an active dispute on-chain as consortium owner/arbitrator."""
+    cmd = [
+        "resolve",
+        "--reservationId",
+        reservation_id,
+        "--resolution",
+        resolution,
+    ]
+    if resolution_evidence:
+        cmd.extend(["--resolutionEvidence", resolution_evidence])
+    if notes:
+        cmd.extend(["--notes", notes])
+    return _run_node_command(cmd)

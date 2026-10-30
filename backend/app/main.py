@@ -8,15 +8,23 @@ from .blockchain import (
     create_onchain_reservation,
     accept_onchain_reservation,
     fulfill_onchain_reservation,
+    dispute_onchain_reservation,
+    resolve_onchain_dispute,
     get_onchain_reservation,
 )
 from .data import INSTITUTIONS, PROPOSALS, COMMITMENTS
-from .models import ResourceRequest, AllocationProposal, AuthorizationRequest
+from .models import (
+    ResourceRequest,
+    AllocationProposal,
+    AuthorizationRequest,
+    DisputeRequest,
+    ResolveDisputeRequest,
+)
 
 app = FastAPI(
     title="MEDSWARM API",
     description="Autonomous healthcare resource coordination with Coral Testnet on-chain verification.",
-    version="0.2.0",
+    version="0.3.0",
 )
 
 app.add_middleware(
@@ -26,6 +34,38 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+def _sync_commitment_from_chain(commitment: dict) -> None:
+    """Synchronize Python in-memory commitment dictionary with live Coral contract state."""
+    res_id = commitment.get("onchain_reservation_id")
+    if not res_id:
+        return
+
+    data = get_onchain_reservation(res_id)
+    if not data.get("success") or not data.get("exists"):
+        return
+
+    res = data["reservation"]
+    onchain_status_name = res.get("status")
+    commitment["onchain_status"] = onchain_status_name
+    commitment["onchain_status_code"] = res.get("statusCode")
+    commitment["fulfilled_at"] = res.get("fulfilledAt")
+    commitment["dispute_evidence"] = res.get("disputeEvidence")
+    commitment["disputed_by"] = res.get("disputedBy")
+
+    # Map on-chain status to Python commitment status
+    if onchain_status_name == "Committed":
+        commitment["status"] = "committed"
+    elif onchain_status_name == "Fulfilled":
+        commitment["status"] = "fulfilled"
+    elif onchain_status_name == "Disputed":
+        commitment["status"] = "disputed"
+    elif onchain_status_name == "Cancelled":
+        commitment["status"] = "cancelled"
+    elif onchain_status_name == "Expired":
+        commitment["status"] = "expired"
+
 
 @app.get("/health")
 def health():
@@ -47,9 +87,11 @@ def health():
         },
     }
 
+
 @app.get("/institutions")
 def list_institutions():
     return INSTITUTIONS
+
 
 @app.post("/requests", response_model=AllocationProposal)
 def create_request(request: ResourceRequest):
@@ -70,6 +112,7 @@ def create_request(request: ResourceRequest):
     payload["proposal_id"] = proposal_id
     PROPOSALS[proposal_id] = payload
     return payload
+
 
 @app.post("/proposals/{proposal_id}/authorize")
 def authorize_proposal(proposal_id: str, approval: AuthorizationRequest):
@@ -113,6 +156,7 @@ def authorize_proposal(proposal_id: str, approval: AuthorizationRequest):
         commitment["block_number"] = onchain_res["blockNumber"]
         commitment["onchain_status"] = "Proposed"
         commitment["message"] = f"Commitment registered on Coral Testnet in block #{onchain_res['blockNumber']}"
+        _sync_commitment_from_chain(commitment)
     else:
         commitment["ledger"] = "coral-testnet-ready"
         commitment["relayer_notice"] = onchain_res.get("error")
@@ -124,9 +168,14 @@ def authorize_proposal(proposal_id: str, approval: AuthorizationRequest):
     COMMITMENTS[commitment_id] = commitment
     return {"proposal_id": proposal_id, "status": "authorized", "commitment": commitment}
 
+
 @app.get("/commitments")
 def list_commitments():
+    # Sync each active commitment with latest on-chain state
+    for commitment in COMMITMENTS.values():
+        _sync_commitment_from_chain(commitment)
     return list(COMMITMENTS.values())
+
 
 @app.post("/commitments/{commitment_id}/accept")
 def accept_commitment(commitment_id: str):
@@ -152,13 +201,14 @@ def accept_commitment(commitment_id: str):
 
     commitment["status"] = "committed"
     commitment["onchain_acceptance_tx_hash"] = accept_res["txHash"]
-    commitment["onchain_status"] = "Committed"
     commitment["acceptance_block"] = accept_res["blockNumber"]
+    _sync_commitment_from_chain(commitment)
     return {
         "status": "committed",
         "commitment": commitment,
         "blockchain": accept_res,
     }
+
 
 @app.get("/commitments/{commitment_id}/onchain")
 def get_commitment_onchain(commitment_id: str):
@@ -175,6 +225,7 @@ def get_commitment_onchain(commitment_id: str):
         }
 
     onchain_data = get_onchain_reservation(reservation_id)
+    _sync_commitment_from_chain(commitment)
     return {
         "onchain": True,
         "commitment_id": commitment_id,
@@ -182,12 +233,14 @@ def get_commitment_onchain(commitment_id: str):
         "contract_state": onchain_data,
     }
 
+
 @app.post("/commitments/{commitment_id}/fulfill")
 def fulfill_commitment(commitment_id: str):
     commitment = COMMITMENTS.get(commitment_id)
     if not commitment:
         raise HTTPException(status_code=404, detail="Commitment not found")
 
+    _sync_commitment_from_chain(commitment)
     current_status = commitment.get("status")
     onchain_status = commitment.get("onchain_status")
 
@@ -212,15 +265,13 @@ def fulfill_commitment(commitment_id: str):
                 detail=f"On-chain fulfillment failed: {fulfill_res.get('error')}",
             )
 
-        commitment["status"] = "fulfilled"
-        commitment["onchain_status"] = "Fulfilled"
         commitment["onchain_fulfillment_tx_hash"] = fulfill_res["txHash"]
         commitment["fulfillment_block"] = fulfill_res["blockNumber"]
-        commitment["fulfilled_at"] = fulfill_res.get("fulfilledAt")
         commitment["relayer_topup_tx"] = fulfill_res.get("relayerTopUpTx")
         commitment["note"] = (
             "Fulfilled on Coral Testnet by provider. 7-day dispute window (604,800s) is now active."
         )
+        _sync_commitment_from_chain(commitment)
         return {
             "status": "fulfilled",
             "commitment": commitment,
@@ -234,3 +285,93 @@ def fulfill_commitment(commitment_id: str):
             "status": "fulfilled",
             "commitment": commitment,
         }
+
+
+@app.post("/commitments/{commitment_id}/dispute")
+def dispute_commitment(commitment_id: str, dispute: DisputeRequest):
+    commitment = COMMITMENTS.get(commitment_id)
+    if not commitment:
+        raise HTTPException(status_code=404, detail="Commitment not found")
+
+    _sync_commitment_from_chain(commitment)
+    onchain_status = commitment.get("onchain_status")
+
+    if onchain_status not in ["Committed", "Fulfilled"]:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot dispute reservation in '{onchain_status}' status. Must be Committed or Fulfilled.",
+        )
+
+    reservation_id = commitment.get("onchain_reservation_id")
+    if not reservation_id:
+        raise HTTPException(status_code=400, detail="Commitment has no on-chain reservation ID.")
+
+    dispute_res = dispute_onchain_reservation(
+        reservation_id=reservation_id,
+        actor=dispute.disputed_by,
+        reason=dispute.reason,
+        evidence_hash=dispute.evidence_hash,
+    )
+
+    if not dispute_res.get("success"):
+        raise HTTPException(
+            status_code=502,
+            detail=f"On-chain dispute initiation failed: {dispute_res.get('error')}",
+        )
+
+    commitment["dispute_tx_hash"] = dispute_res["txHash"]
+    commitment["dispute_block"] = dispute_res["blockNumber"]
+    commitment["dispute_reason"] = dispute.reason
+    commitment["evidence_hash"] = dispute_res["evidenceHash"]
+    _sync_commitment_from_chain(commitment)
+
+    return {
+        "status": "disputed",
+        "commitment": commitment,
+        "blockchain": dispute_res,
+    }
+
+
+@app.post("/commitments/{commitment_id}/resolve")
+def resolve_dispute(commitment_id: str, resolution: ResolveDisputeRequest):
+    commitment = COMMITMENTS.get(commitment_id)
+    if not commitment:
+        raise HTTPException(status_code=404, detail="Commitment not found")
+
+    _sync_commitment_from_chain(commitment)
+    onchain_status = commitment.get("onchain_status")
+
+    if onchain_status != "Disputed":
+        raise HTTPException(
+            status_code=409,
+            detail=f"Cannot resolve reservation with status '{onchain_status}'. Reservation must be 'Disputed'.",
+        )
+
+    reservation_id = commitment.get("onchain_reservation_id")
+    if not reservation_id:
+        raise HTTPException(status_code=400, detail="Commitment has no on-chain reservation ID.")
+
+    resolve_res = resolve_onchain_dispute(
+        reservation_id=reservation_id,
+        resolution=resolution.resolution,
+        notes=resolution.notes,
+        resolution_evidence=resolution.resolution_evidence,
+    )
+
+    if not resolve_res.get("success"):
+        raise HTTPException(
+            status_code=502,
+            detail=f"On-chain dispute resolution failed: {resolve_res.get('error')}",
+        )
+
+    commitment["resolution_tx_hash"] = resolve_res["txHash"]
+    commitment["resolution_block"] = resolve_res["blockNumber"]
+    commitment["resolution_notes"] = resolution.notes
+    commitment["resolution_evidence"] = resolve_res["resolutionEvidence"]
+    _sync_commitment_from_chain(commitment)
+
+    return {
+        "status": "resolved",
+        "commitment": commitment,
+        "blockchain": resolve_res,
+    }

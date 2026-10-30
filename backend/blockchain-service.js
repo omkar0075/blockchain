@@ -476,6 +476,151 @@ async function cmdFulfillReservation(args) {
   });
 }
 
+async function cmdDisputeReservation(args) {
+  const reservationId = args.reservationId;
+  if (!reservationId || !isHex(reservationId) || reservationId.length !== 66) {
+    throw new Error('Missing or invalid reservationId (must be 0x... 32-byte hex).');
+  }
+
+  const actorId = args.actor || 'hospital-a';
+  const actorAccount = resolveAccount(actorId);
+
+  let evidenceHash = args.evidenceHash;
+  if (!evidenceHash) {
+    const reason = args.reason || `Dispute raised by ${actorId} at ${Date.now()}`;
+    evidenceHash = pad(stringToHex(reason.slice(0, 31)), { size: 32 });
+  } else if (!isHex(evidenceHash) || evidenceHash.length !== 66) {
+    evidenceHash = pad(stringToHex(evidenceHash.slice(0, 31)), { size: 32 });
+  }
+
+  const client = getPublicClient();
+  const artifact = loadArtifact();
+
+  // 1. Check actor's MST gas balance on Coral (idempotent top-up check)
+  const balance = await client.getBalance({ address: actorAccount.address });
+  let topUpTxHash = null;
+
+  const minRequired = parseEther('0.005');
+  if (balance < minRequired) {
+    const { account: relayerAccount, client: relayerWallet } = getRelayerClient();
+    topUpTxHash = await relayerWallet.sendTransaction({
+      to: actorAccount.address,
+      value: parseEther('0.01'),
+    });
+    await client.waitForTransactionReceipt({ hash: topUpTxHash });
+  }
+
+  // 2. Actor executes disputeReservation directly as msg.sender
+  const actorWallet = createWalletClient({
+    account: actorAccount,
+    chain: coralChain,
+    transport: http(RPC_URL),
+  });
+
+  const contract = getContract({
+    address: CONTRACT_ADDRESS,
+    abi: artifact.abi,
+    client: { public: client, wallet: actorWallet },
+  });
+
+  const txHash = await contract.write.disputeReservation(
+    [reservationId, evidenceHash],
+    { account: actorAccount }
+  );
+
+  const receipt = await client.waitForTransactionReceipt({ hash: txHash });
+
+  const disputeLogs = parseEventLogs({
+    abi: artifact.abi,
+    logs: receipt.logs,
+    eventName: 'ReservationDisputed',
+  });
+
+  if (disputeLogs.length === 0) {
+    throw new Error('No ReservationDisputed event found in transaction receipt logs.');
+  }
+
+  jsonOut({
+    success: true,
+    action: 'dispute-reservation',
+    reservationId,
+    txHash,
+    blockNumber: Number(receipt.blockNumber),
+    gasUsed: receipt.gasUsed.toString(),
+    disputedBy: actorAccount.address,
+    evidenceHash,
+    status: 'Disputed',
+    relayerTopUpTx: topUpTxHash,
+  });
+}
+
+async function cmdResolveDispute(args) {
+  const reservationId = args.reservationId;
+  if (!reservationId || !isHex(reservationId) || reservationId.length !== 66) {
+    throw new Error('Missing or invalid reservationId.');
+  }
+
+  const resolutionRaw = (args.resolution || 'Cancelled').toLowerCase();
+  let resolutionCode;
+  if (resolutionRaw === 'fulfilled' || resolutionRaw === '2') {
+    resolutionCode = 2;
+  } else if (resolutionRaw === 'cancelled' || resolutionRaw === 'canceled' || resolutionRaw === '3') {
+    resolutionCode = 3;
+  } else {
+    throw new Error("Invalid resolution outcome. Must be 'Fulfilled' or 'Cancelled'.");
+  }
+
+  let resolutionEvidence = args.resolutionEvidence;
+  if (!resolutionEvidence) {
+    const memo = args.notes || `Arbitration resolved to ${STATUS_NAMES[resolutionCode]} at ${Date.now()}`;
+    resolutionEvidence = pad(stringToHex(memo.slice(0, 31)), { size: 32 });
+  } else if (!isHex(resolutionEvidence) || resolutionEvidence.length !== 66) {
+    resolutionEvidence = pad(stringToHex(resolutionEvidence.slice(0, 31)), { size: 32 });
+  }
+
+  const client = getPublicClient();
+  const { account: relayerAccount, client: relayerWallet } = getRelayerClient();
+  const artifact = loadArtifact();
+
+  const contract = getContract({
+    address: CONTRACT_ADDRESS,
+    abi: artifact.abi,
+    client: { public: client, wallet: relayerWallet },
+  });
+
+  // Relayer is contract owner / arbitrator
+  const txHash = await contract.write.resolveDispute(
+    [reservationId, resolutionCode, resolutionEvidence],
+    { account: relayerAccount }
+  );
+
+  const receipt = await client.waitForTransactionReceipt({ hash: txHash });
+
+  const resolveLogs = parseEventLogs({
+    abi: artifact.abi,
+    logs: receipt.logs,
+    eventName: 'ReservationDisputeResolved',
+  });
+
+  if (resolveLogs.length === 0) {
+    throw new Error('No ReservationDisputeResolved event found in transaction receipt logs.');
+  }
+
+  jsonOut({
+    success: true,
+    action: 'resolve-dispute',
+    reservationId,
+    txHash,
+    blockNumber: Number(receipt.blockNumber),
+    gasUsed: receipt.gasUsed.toString(),
+    resolver: relayerAccount.address,
+    outcome: STATUS_NAMES[resolutionCode],
+    outcomeCode: resolutionCode,
+    resolutionEvidence,
+    status: STATUS_NAMES[resolutionCode],
+  });
+}
+
 async function cmdGetReservation(args) {
   const reservationId = args.reservationId;
   if (!reservationId || !isHex(reservationId) || reservationId.length !== 66) {
@@ -572,8 +717,16 @@ async function main() {
     case 'fulfill-reservation':
       await cmdFulfillReservation(args);
       break;
+    case 'dispute':
+    case 'dispute-reservation':
+      await cmdDisputeReservation(args);
+      break;
+    case 'resolve':
+    case 'resolve-dispute':
+      await cmdResolveDispute(args);
+      break;
     default:
-      throw new Error(`Unknown command '${command}'. Use status, create, accept, or get.`);
+      throw new Error(`Unknown command '${command}'. Use status, create, accept, get, fulfill, dispute, or resolve.`);
   }
 }
 

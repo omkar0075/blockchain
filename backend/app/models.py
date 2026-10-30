@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
 ResourceType = Literal["diagnostic_slot"]
@@ -30,3 +30,13 @@ class AllocationProposal(BaseModel):
 class AuthorizationRequest(BaseModel):
     approved_by: str = Field(min_length=2, max_length=100)
     approved: bool
+
+class DisputeRequest(BaseModel):
+    disputed_by: str = Field(default="hospital-a", description="Institution raising the dispute")
+    reason: str = Field(min_length=5, max_length=500, description="Off-chain clinical or operational dispute rationale")
+    evidence_hash: Optional[str] = Field(default=None, description="Optional 32-byte hex hash of off-chain incident evidence")
+
+class ResolveDisputeRequest(BaseModel):
+    resolution: Literal["Fulfilled", "Cancelled"] = Field(description="Arbitration outcome on Coral Testnet")
+    notes: str = Field(min_length=5, max_length=500, description="Arbitration findings and resolution rationale")
+    resolution_evidence: Optional[str] = Field(default=None, description="Optional 32-byte hex hash of formal arbitration record")
