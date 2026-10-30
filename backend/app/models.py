@@ -17,6 +17,7 @@ class AllocationOffer(BaseModel):
     available_quantity: int
     estimated_delivery_hours: int
     rationale: str
+    onchain_verified: bool = False
 
 class AllocationProposal(BaseModel):
     proposal_id: str | None = None
@@ -26,10 +27,23 @@ class AllocationProposal(BaseModel):
     selected_quantity: int = 0
     requires_authorization: bool = True
     status: Literal["proposed", "authorized", "committed", "fulfilled", "cancelled", "disputed"] = "proposed"
+    lock_id: Optional[str] = None
+    lock_status: Optional[str] = None
+    lock_expires_at: Optional[str] = None
+    lock_tx_hash: Optional[str] = None
 
 class AuthorizationRequest(BaseModel):
     approved_by: str = Field(min_length=2, max_length=100)
     approved: bool
+
+class InventoryUpdateRequest(BaseModel):
+    provider_id: str = Field(default="lab-c", description="Accredited provider institution identifier")
+    resource_type: ResourceType = "diagnostic_slot"
+    total_capacity: int = Field(ge=0, le=10000, description="Total diagnostic capacity quota")
+    is_active: bool = True
+
+class CapacityLockReleaseRequest(BaseModel):
+    reason: str = Field(default="manual-release", min_length=3, max_length=200)
 
 class DisputeRequest(BaseModel):
     disputed_by: str = Field(default="hospital-a", description="Institution raising the dispute")

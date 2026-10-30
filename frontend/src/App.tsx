@@ -354,7 +354,7 @@ export default function App() {
           method: 'eth_call',
           params: [
             {
-              to: health?.contract_address || '0xbafa85b0797d0a793a2c934d623f02588fe9770a',
+              to: health?.contract_address || '0xcd630b8e555e0751afbb9ae511869110d361bb83',
               data: callData,
             },
             'latest',
@@ -468,7 +468,7 @@ export default function App() {
         <div className="protocol-item">
           <strong>Smart Contract:</strong>{' '}
           <span title={health?.contract_address}>
-            {health?.contract_address ? `${health.contract_address.slice(0, 10)}...${health.contract_address.slice(-8)}` : '0xbafa85...770a'}
+            {health?.contract_address ? `${health.contract_address.slice(0, 10)}...${health.contract_address.slice(-8)}` : '0xcd630b...bb83'}
           </span>
         </div>
         <div className="protocol-item">
@@ -974,7 +974,7 @@ export default function App() {
                 </span>
               </div>
               <div style={{ fontSize: '11px', color: '#475569', marginTop: '4px' }}>
-                Node Endpoint: <code>https://coralrpc.mstblockchain.com</code> | Contract: <code>{health?.contract_address || '0xbafa85b0797d0a793a2c934d623f02588fe9770a'}</code>
+                Node Endpoint: <code>https://coralrpc.mstblockchain.com</code> | Contract: <code>{health?.contract_address || '0xcd630b8e555e0751afbb9ae511869110d361bb83'}</code>
               </div>
             </div>
 
@@ -1012,7 +1012,7 @@ export default function App() {
           <span>{message}</span>
         </div>
         <div style={{ fontSize: '11px', color: '#64748b' }}>
-          MST Coral Testnet Contract: <code>{health?.contract_address || '0xbafa85b0797d0a793a2c934d623f02588fe9770a'}</code>
+          MST Coral Testnet Contract: <code>{health?.contract_address || '0xcd630b8e555e0751afbb9ae511869110d361bb83'}</code>
         </div>
       </footer>
     </main>

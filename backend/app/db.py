@@ -87,6 +87,14 @@ def init_db() -> None:
             cursor.execute("ALTER TABLE commitments ADD COLUMN terms_hash TEXT")
         if "canonical_terms" not in existing_cols:
             cursor.execute("ALTER TABLE commitments ADD COLUMN canonical_terms TEXT")
+        if "lock_id" not in existing_cols:
+            cursor.execute("ALTER TABLE commitments ADD COLUMN lock_id TEXT")
+
+        proposal_cols = {
+            row["name"] for row in cursor.execute("PRAGMA table_info(proposals)").fetchall()
+        }
+        if "lock_id" not in proposal_cols:
+            cursor.execute("ALTER TABLE proposals ADD COLUMN lock_id TEXT")
 
         # 3. Evidence Vault Table (stores off-chain raw clinical/operational documents)
         cursor.execute(
@@ -189,10 +197,10 @@ def save_commitment(commitment: dict[str, Any]) -> None:
                 dispute_evidence, disputed_by, dispute_reason, dispute_tx_hash,
                 dispute_block, resolution_notes, resolution_evidence,
                 resolution_tx_hash, resolution_block, relayer_topup_tx,
-                note, message, terms_hash, canonical_terms, created_at, updated_at
+                note, message, terms_hash, canonical_terms, lock_id, created_at, updated_at
             ) VALUES (
                 ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
             )
             """,
             (
@@ -225,6 +233,7 @@ def save_commitment(commitment: dict[str, Any]) -> None:
                 commitment.get("message"),
                 commitment.get("terms_hash"),
                 canonical_terms_str,
+                commitment.get("lock_id"),
                 created_at,
                 now,
             ),

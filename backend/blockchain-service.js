@@ -47,7 +47,7 @@ const CHAIN_ID = parseInt(process.env.CHAIN_ID || '54635', 10);
 const CONTRACT_ADDRESS =
   process.env.CONTRACT_ADDRESS ||
   process.env.MEDWAY_CONTRACT_ADDRESS ||
-  '0xbafa85b0797d0a793a2c934d623f02588fe9770a';
+  '0xcd630b8e555e0751afbb9ae511869110d361bb83';
 
 // Relayer private key (optional: if omitted, write calls report relayer unconfigured)
 const RELAYER_KEY =
@@ -743,6 +743,377 @@ async function cmdCheckInstitution(args) {
   });
 }
 
+function formatResourceType(resourceTypeRaw) {
+  if (!resourceTypeRaw) {
+    resourceTypeRaw = 'diagnostic_slot';
+  }
+  if (isHex(resourceTypeRaw) && resourceTypeRaw.length === 66) {
+    return resourceTypeRaw;
+  }
+  return pad(stringToHex(resourceTypeRaw), { size: 32 });
+}
+
+// -------------------------------------------------------------------
+// Feature 3: Capacity Management & Autonomous Locking Commands
+// -------------------------------------------------------------------
+
+async function cmdSetInventory(args) {
+  const providerId = args.provider || 'lab-c';
+  const providerAccount = resolveAccount(providerId);
+  const resourceType = formatResourceType(args.resourceType);
+  const totalCapacity = parseInt(args.totalCapacity || args.capacity || '12', 10);
+  const isActive = args.isActive !== undefined ? (args.isActive === 'true' || args.isActive === true) : true;
+
+  const client = getPublicClient();
+  const artifact = loadArtifact();
+
+  // 1. Ensure provider has sufficient gas
+  const topUpTxHash = await ensureGasWithLock(providerAccount.address, client);
+
+  // 2. Provider submits transaction directly
+  const providerWallet = createWalletClient({
+    account: providerAccount,
+    chain: coralChain,
+    transport: http(RPC_URL),
+  });
+
+  const contract = getContract({
+    address: CONTRACT_ADDRESS,
+    abi: artifact.abi,
+    client: { public: client, wallet: providerWallet },
+  });
+
+  const txHash = await contract.write.setResourceInventory(
+    [resourceType, totalCapacity, isActive],
+    { account: providerAccount }
+  );
+
+  const receipt = await client.waitForTransactionReceipt({ hash: txHash });
+
+  const setLogs = parseEventLogs({
+    abi: artifact.abi,
+    logs: receipt.logs,
+    eventName: 'ResourceInventorySet',
+  });
+
+  jsonOut({
+    success: true,
+    action: 'set-inventory',
+    provider: providerAccount.address,
+    resourceTypeHex: resourceType,
+    resourceType: args.resourceType || 'diagnostic_slot',
+    totalCapacity,
+    isActive,
+    txHash,
+    blockNumber: Number(receipt.blockNumber),
+    gasUsed: receipt.gasUsed.toString(),
+    relayerTopUpTx: topUpTxHash,
+  });
+}
+
+async function cmdGetCapacity(args) {
+  const providerTarget = args.provider || 'lab-c';
+  const providerAddress = resolveAddress(providerTarget);
+  const resourceType = formatResourceType(args.resourceType);
+
+  const client = getPublicClient();
+  const artifact = loadArtifact();
+  const contract = getContract({
+    address: CONTRACT_ADDRESS,
+    abi: artifact.abi,
+    client,
+  });
+
+  const [available, inv] = await Promise.all([
+    contract.read.getAvailableCapacity([providerAddress, resourceType]),
+    contract.read.getResourceInventory([providerAddress, resourceType]),
+  ]);
+
+  jsonOut({
+    success: true,
+    provider: providerAddress,
+    resourceType: args.resourceType || 'diagnostic_slot',
+    resourceTypeHex: resourceType,
+    totalCapacity: Number(inv[0]),
+    lockedCapacity: Number(inv[1]),
+    committedCapacity: Number(inv[2]),
+    availableCapacity: Number(available),
+    isActive: inv[4],
+  });
+}
+
+async function cmdLockCapacity(args) {
+  const requesterId = args.requester || 'hospital-a';
+  const providerId = args.provider || 'lab-c';
+  const resourceTypeStr = args.resourceType || 'diagnostic_slot';
+  const resourceType = formatResourceType(resourceTypeStr);
+  const quantity = parseInt(args.quantity || '1', 10);
+  const duration = BigInt(args.duration || 1800); // 30 minutes default
+
+  const requesterAccount = resolveAccount(requesterId);
+  const providerAddress = resolveAddress(providerId);
+
+  const client = getPublicClient();
+  const { account: relayerAccount, client: walletClient } = getRelayerClient();
+  const artifact = loadArtifact();
+
+  const contract = getContract({
+    address: CONTRACT_ADDRESS,
+    abi: artifact.abi,
+    client: { public: client, wallet: walletClient },
+  });
+
+  const latestBlock = await client.getBlock();
+  const deadline = latestBlock.timestamp + 1800n; // 30 mins to relay
+  const nonce = await contract.read.nonces([requesterAccount.address]);
+
+  const domain = {
+    name: 'MEDwayReservation',
+    version: '1',
+    chainId: CHAIN_ID,
+    verifyingContract: CONTRACT_ADDRESS,
+  };
+
+  const types = {
+    CapacityLockRequest: [
+      { name: 'requester', type: 'address' },
+      { name: 'provider', type: 'address' },
+      { name: 'resourceType', type: 'bytes32' },
+      { name: 'quantity', type: 'uint32' },
+      { name: 'duration', type: 'uint64' },
+      { name: 'nonce', type: 'uint256' },
+      { name: 'deadline', type: 'uint256' },
+    ],
+  };
+
+  // 1. Off-chain EIP-712 typed signature by requester
+  const signature = await requesterAccount.signTypedData({
+    domain,
+    types,
+    primaryType: 'CapacityLockRequest',
+    message: {
+      requester: requesterAccount.address,
+      provider: providerAddress,
+      resourceType,
+      quantity,
+      duration,
+      nonce,
+      deadline,
+    },
+  });
+
+  // 2. Relayer submits gas-sponsored lockCapacityWithSig transaction
+  const txHash = await contract.write.lockCapacityWithSig(
+    [
+      requesterAccount.address,
+      providerAddress,
+      resourceType,
+      quantity,
+      duration,
+      deadline,
+      signature,
+    ],
+    { account: relayerAccount }
+  );
+
+  const receipt = await client.waitForTransactionReceipt({ hash: txHash });
+
+  const lockLogs = parseEventLogs({
+    abi: artifact.abi,
+    logs: receipt.logs,
+    eventName: 'CapacityLocked',
+  });
+
+  if (lockLogs.length === 0) {
+    throw new Error('No CapacityLocked event found in transaction receipt logs.');
+  }
+
+  const lockId = lockLogs[0].args.lockId;
+  const expiresAt = lockLogs[0].args.expiresAt;
+
+  jsonOut({
+    success: true,
+    action: 'lock-capacity',
+    lockId,
+    txHash,
+    blockNumber: Number(receipt.blockNumber),
+    gasUsed: receipt.gasUsed.toString(),
+    requester: requesterAccount.address,
+    provider: providerAddress,
+    resourceType: resourceTypeStr,
+    quantity,
+    duration: Number(duration),
+    expiresAt: expiresAt.toString(),
+    status: 'Active',
+    relayer: relayerAccount.address,
+  });
+}
+
+async function cmdCreateReservationWithLock(args) {
+  const lockId = args.lockId;
+  if (!lockId || !isHex(lockId) || lockId.length !== 66) {
+    throw new Error('Missing or invalid lockId (must be 0x... 32-byte hex).');
+  }
+
+  const resourceRefRaw = args.resourceRef || `slot-lock-${Date.now()}`;
+  const expiresIn = BigInt(args.expiresIn || 7200);
+
+  const client = getPublicClient();
+  const { account: relayerAccount, client: walletClient } = getRelayerClient();
+  const artifact = loadArtifact();
+
+  const contract = getContract({
+    address: CONTRACT_ADDRESS,
+    abi: artifact.abi,
+    client: { public: client, wallet: walletClient },
+  });
+
+  const latestBlock = await client.getBlock();
+  const expiresAt = latestBlock.timestamp + expiresIn;
+
+  const resourceRef = resourceRefRaw.startsWith('0x') && resourceRefRaw.length === 66
+    ? resourceRefRaw
+    : pad(stringToHex(resourceRefRaw), { size: 32 });
+
+  // Relayer (contract owner) converts the lock atomically
+  const txHash = await contract.write.createReservationWithLock(
+    [lockId, resourceRef, expiresAt],
+    { account: relayerAccount }
+  );
+
+  const receipt = await client.waitForTransactionReceipt({ hash: txHash });
+
+  const createdLogs = parseEventLogs({
+    abi: artifact.abi,
+    logs: receipt.logs,
+    eventName: 'ReservationCreated',
+  });
+
+  if (createdLogs.length === 0) {
+    throw new Error('No ReservationCreated event found in transaction receipt logs.');
+  }
+
+  const reservationId = createdLogs[0].args.reservationId;
+
+  const convertLogs = parseEventLogs({
+    abi: artifact.abi,
+    logs: receipt.logs,
+    eventName: 'CapacityLockConverted',
+  });
+
+  jsonOut({
+    success: true,
+    action: 'create-reservation-with-lock',
+    reservationId,
+    lockId,
+    txHash,
+    blockNumber: Number(receipt.blockNumber),
+    gasUsed: receipt.gasUsed.toString(),
+    resourceRef,
+    expiresAt: expiresAt.toString(),
+    status: 'Proposed',
+    relayer: relayerAccount.address,
+    convertedQuantity: convertLogs.length > 0 ? Number(convertLogs[0].args.quantity) : null,
+  });
+}
+
+async function cmdReleaseLock(args) {
+  const lockId = args.lockId;
+  if (!lockId || !isHex(lockId) || lockId.length !== 66) {
+    throw new Error('Missing or invalid lockId (must be 0x... 32-byte hex).');
+  }
+
+  const reason = args.reason || 'Manual release via coordinator';
+
+  const client = getPublicClient();
+  const { account: relayerAccount, client: walletClient } = getRelayerClient();
+  const artifact = loadArtifact();
+
+  const contract = getContract({
+    address: CONTRACT_ADDRESS,
+    abi: artifact.abi,
+    client: { public: client, wallet: walletClient },
+  });
+
+  // Relayer (owner/keeper) executes releaseLock
+  const txHash = await contract.write.releaseLock(
+    [lockId, reason],
+    { account: relayerAccount }
+  );
+
+  const receipt = await client.waitForTransactionReceipt({ hash: txHash });
+
+  const releaseLogs = parseEventLogs({
+    abi: artifact.abi,
+    logs: receipt.logs,
+    eventName: 'CapacityLockReleased',
+  });
+
+  if (releaseLogs.length === 0) {
+    throw new Error('No CapacityLockReleased event found in transaction receipt logs.');
+  }
+
+  jsonOut({
+    success: true,
+    action: 'release-lock',
+    lockId,
+    txHash,
+    blockNumber: Number(receipt.blockNumber),
+    gasUsed: receipt.gasUsed.toString(),
+    releasedBy: relayerAccount.address,
+    releasedQuantity: Number(releaseLogs[0].args.quantity),
+    reason,
+    status: 'Released',
+  });
+}
+
+async function cmdGetLock(args) {
+  const lockId = args.lockId;
+  if (!lockId || !isHex(lockId) || lockId.length !== 66) {
+    throw new Error('Missing or invalid lockId (must be 0x... 32-byte hex).');
+  }
+
+  const client = getPublicClient();
+  const artifact = loadArtifact();
+  const contract = getContract({
+    address: CONTRACT_ADDRESS,
+    abi: artifact.abi,
+    client,
+  });
+
+  const exists = await contract.read.lockExists([lockId]);
+  if (!exists) {
+    jsonOut({
+      success: true,
+      exists: false,
+      lockId,
+      message: 'Capacity lock not found on-chain.',
+    });
+    return;
+  }
+
+  const lock = await contract.read.capacityLocks([lockId]);
+  const lockStatusNames = ['None', 'Active', 'Converted', 'Released'];
+  const statusCode = Number(lock[7]);
+
+  jsonOut({
+    success: true,
+    exists: true,
+    lock: {
+      lockId: lock[0],
+      resourceType: lock[1],
+      provider: lock[2],
+      requester: lock[3],
+      quantity: Number(lock[4]),
+      createdAt: lock[5].toString(),
+      expiresAt: lock[6].toString(),
+      status: lockStatusNames[statusCode] || 'Unknown',
+      statusCode,
+      reservationId: lock[8],
+    },
+  });
+}
+
 // -------------------------------------------------------------------
 // CLI Argument Parsing
 // -------------------------------------------------------------------
@@ -804,8 +1175,33 @@ async function main() {
     case 'institution':
       await cmdCheckInstitution(args);
       break;
+    case 'set-inventory':
+    case 'inventory':
+      await cmdSetInventory(args);
+      break;
+    case 'get-capacity':
+    case 'available-capacity':
+    case 'capacity':
+      await cmdGetCapacity(args);
+      break;
+    case 'lock':
+    case 'lock-capacity':
+      await cmdLockCapacity(args);
+      break;
+    case 'create-reservation-with-lock':
+    case 'convert-lock':
+      await cmdCreateReservationWithLock(args);
+      break;
+    case 'release-lock':
+    case 'unlock':
+      await cmdReleaseLock(args);
+      break;
+    case 'get-lock':
+    case 'lock-status':
+      await cmdGetLock(args);
+      break;
     default:
-      throw new Error(`Unknown command '${command}'. Use status, create, accept, get, fulfill, dispute, resolve, or check-institution.`);
+      throw new Error(`Unknown command '${command}'. Use status, create, accept, get, fulfill, dispute, resolve, check-institution, set-inventory, get-capacity, lock-capacity, create-reservation-with-lock, release-lock, or get-lock.`);
   }
 }
 

@@ -20,7 +20,7 @@ const RPC_URL = process.env.CORAL_RPC_URL || 'https://coralrpc.mstblockchain.com
 const CONTRACT_ADDRESS =
   process.env.CONTRACT_ADDRESS ||
   process.env.MEDWAY_CONTRACT_ADDRESS ||
-  '0xbafa85b0797d0a793a2c934d623f02588fe9770a';
+  '0xcd630b8e555e0751afbb9ae511869110d361bb83';
 const RESERVATIONS_SELECTOR = '0xa1b416f9'; // reservations(bytes32)
 
 const STATUS_NAMES = [

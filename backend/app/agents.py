@@ -1,27 +1,80 @@
+import logging
+from .blockchain import get_onchain_capacity
 from .data import INSTITUTIONS
 from .models import ResourceRequest, AllocationOffer
 
+logger = logging.getLogger("medway.agents")
+
 URGENCY_ORDER = {"critical": 0, "urgent": 1, "routine": 2}
 
+
 def discover_and_verify(request: ResourceRequest) -> list[AllocationOffer]:
-    """Demo provider agents report synthetic capacity; freshness is assumed for MVP."""
-    offers = []
+    """
+    AI discovery and negotiation agent.
+    
+    Architectural Invariant:
+    The AI agent is NEVER the authority on resource availability.
+    The agent discovers registered candidate providers and inspects real-time
+    available capacity strictly enforced by on-chain smart contracts on Coral Testnet.
+    """
+    offers: list[AllocationOffer] = []
+    
     for institution in INSTITUTIONS:
         if institution["id"] == request.requesting_institution_id:
             continue
-        quantity = int(institution["resources"].get(request.resource_type, 0))
-        if quantity <= 0:
-            continue
+
+        provider_id = institution["id"]
+        provider_name = institution["name"]
+        resource_type = request.resource_type
+
+        # 1. Query on-chain capacity directly from Coral Testnet
+        onchain_verified = False
+        available_qty = 0
+        total_capacity = 0
+        is_active = True
+
+        try:
+            cap_res = get_onchain_capacity(provider_id, resource_type)
+            if cap_res.get("success"):
+                is_active = bool(cap_res.get("isActive", True))
+                if not is_active:
+                    logger.info("Provider %s is inactive on-chain for resource %s", provider_id, resource_type)
+                    continue
+                available_qty = int(cap_res.get("availableCapacity", 0))
+                total_capacity = int(cap_res.get("totalCapacity", 0))
+                onchain_verified = True
+        except Exception as e:
+            logger.warning("Failed to query on-chain capacity for %s: %s", provider_id, e)
+
+        # 2. Fallback to catalog data only if on-chain query was unavailable or returned 0 total capacity
+        if not onchain_verified or total_capacity == 0:
+            catalog_qty = int(institution["resources"].get(resource_type, 0))
+            if catalog_qty <= 0:
+                continue
+            available_qty = catalog_qty
+            rationale = "Synthetic catalog capacity; offline fallback pending on-chain quota."
+        else:
+            if available_qty <= 0:
+                # On-chain capacity is depleted (all slots locked or committed)
+                continue
+            rationale = f"Real-time available capacity ({available_qty}/{total_capacity} slots) strictly verified on Coral Testnet."
+
+        delivery_hours = 2 if institution["type"] == "diagnostic_lab" else 6
+        if request.urgency == "critical":
+            delivery_hours = max(1, delivery_hours // 2)
+
         offers.append(
             AllocationOffer(
-                provider_id=institution["id"],
-                provider_name=institution["name"],
-                resource_type=request.resource_type,
-                available_quantity=quantity,
-                estimated_delivery_hours=2 if institution["type"] == "diagnostic_lab" else 6,
-                rationale="Synthetic demo capacity; must be verified against provider operational records in production.",
+                provider_id=provider_id,
+                provider_name=provider_name,
+                resource_type=resource_type,
+                available_quantity=available_qty,
+                estimated_delivery_hours=delivery_hours,
+                rationale=rationale,
+                onchain_verified=onchain_verified,
             )
         )
+
     return offers
 
 def choose_offer(request: ResourceRequest, offers: list[AllocationOffer]) -> AllocationOffer | None:

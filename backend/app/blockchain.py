@@ -159,3 +159,108 @@ def check_institution_onchain(identifier: str) -> dict[str, Any]:
         "--institution",
         identifier,
     ])
+
+
+# -------------------------------------------------------------------
+# Feature 3: Capacity Inventory & Temporary Locking
+# -------------------------------------------------------------------
+
+
+def set_onchain_inventory(
+    provider: str,
+    resource_type: str,
+    total_capacity: int,
+    is_active: bool = True,
+) -> dict[str, Any]:
+    """Set total capacity inventory for a provider on Coral Testnet."""
+    return _run_node_command([
+        "set-inventory",
+        "--provider",
+        provider,
+        "--resourceType",
+        resource_type,
+        "--totalCapacity",
+        str(total_capacity),
+        "--isActive",
+        str(is_active).lower(),
+    ])
+
+
+def get_onchain_capacity(
+    provider: str,
+    resource_type: str = "diagnostic_slot",
+) -> dict[str, Any]:
+    """Query real-time available capacity and full inventory directly from Coral Testnet."""
+    return _run_node_command([
+        "get-capacity",
+        "--provider",
+        provider,
+        "--resourceType",
+        resource_type,
+    ])
+
+
+def lock_onchain_capacity(
+    requester: str,
+    provider: str,
+    resource_type: str = "diagnostic_slot",
+    quantity: int = 1,
+    duration: int = 1800,
+) -> dict[str, Any]:
+    """Execute gasless EIP-712 temporary capacity lock on Coral Testnet."""
+    return _run_node_command([
+        "lock-capacity",
+        "--requester",
+        requester,
+        "--provider",
+        provider,
+        "--resourceType",
+        resource_type,
+        "--quantity",
+        str(quantity),
+        "--duration",
+        str(duration),
+    ])
+
+
+def create_reservation_with_lock(
+    lock_id: str,
+    resource_ref: str,
+    expires_in: int = 7200,
+) -> dict[str, Any]:
+    """Atomically convert an active capacity lock into an on-chain reservation commitment."""
+    return _run_node_command([
+        "create-reservation-with-lock",
+        "--lockId",
+        lock_id,
+        "--resourceRef",
+        resource_ref,
+        "--expiresIn",
+        str(expires_in),
+    ])
+
+
+def release_onchain_lock(
+    lock_id: str,
+    actor: str = "hospital-a",
+    reason: str = "declined-by-coordinator",
+) -> dict[str, Any]:
+    """Release an uncommitted or expired capacity lock back to available inventory."""
+    return _run_node_command([
+        "release-lock",
+        "--lockId",
+        lock_id,
+        "--actor",
+        actor,
+        "--reason",
+        reason,
+    ])
+
+
+def get_onchain_lock(lock_id: str) -> dict[str, Any]:
+    """Read capacity lock state directly from Coral contract storage."""
+    return _run_node_command([
+        "get-lock",
+        "--lockId",
+        lock_id,
+    ])
