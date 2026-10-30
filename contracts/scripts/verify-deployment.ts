@@ -8,8 +8,8 @@ async function main() {
   const { viem } = await network.connect(networkName);
   const publicClient = await viem.getPublicClient();
 
-  // Target deployed contract address on Coral Testnet
-  const CONTRACT_ADDRESS = "0x8e8f0fa3541f6599affcbdeab71ce4fd5b2bf06d";
+  // Target deployed contract address on Coral Testnet (Upgraded EIP-712 build)
+  const CONTRACT_ADDRESS = "0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC";
   const contractAddress = CONTRACT_ADDRESS as `0x${string}`;
 
   console.log(`Verifying deployment at address: ${contractAddress}`);

@@ -60,16 +60,32 @@ async function main() {
 
   const disputeDays = Number(disputeWindow) / 86400;
 
+  // 5. Test if EIP-712 upgrade is active on this deployment
+  let hasEip712 = false;
+  let domainSeparator = 'Not Available';
+  try {
+    domainSeparator = await reservation.read.DOMAIN_SEPARATOR();
+    hasEip712 = true;
+  } catch {
+    hasEip712 = false;
+  }
+
   console.log('\n========================================================');
-  console.log(' Coral Contract State Verification Successful!');
+  console.log(' Coral Contract State Verification');
   console.log('========================================================');
   console.log(` Network:          Coral Testnet`);
   console.log(` Latest Block:     #${blockNumber}`);
   console.log(` Contract Address: ${contractAddress}`);
   console.log(` Contract Owner:   ${owner}`);
   console.log(` Dispute Window:   ${disputeWindow} seconds (${disputeDays} days)`);
-  console.log(' Artifact Match:   VERIFIED (Hardhat ABI matches on-chain functions)');
-  console.log(' Cost:             0 MST tokens (Read-only call)');
+  console.log('--------------------------------------------------------');
+  if (hasEip712) {
+    console.log(' EIP-712 Support:  ACTIVE (Upgraded Build with Gasless Meta-Tx)');
+    console.log(` Domain Separator: ${domainSeparator}`);
+  } else {
+    console.log(' EIP-712 Support:  NOT SUPPORTED (This is the older build)');
+    console.log(' Status:           Needs upgraded deployment to support gasless relaying');
+  }
   console.log('========================================================\n');
 }
 
@@ -77,4 +93,3 @@ main().catch((error) => {
   console.error('\n[FAILED] Contract state verification failed:', error?.message || error);
   process.exit(1);
 });
-
