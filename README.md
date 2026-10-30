@@ -268,44 +268,105 @@ stateDiagram-v2
 
 ---
 
-## 📂 Repository Structure
+## 📂 Repository Structure & Clean Architectural Boundaries
 
-The repository is structured as a modular monorepo containing the smart contracts, Python FastAPI backend, React coordinator frontend, and independent verification utilities:
+MEDway is structured as a monorepo adhering strictly to **Clean Architecture** principles and explicit separation of concerns. The codebase is partitioned into distinct architectural layers with strict unidirectional dependency boundaries:
+
+```
+┌─────────────────────────────────────────────────────────────────────────────────┐
+│                          CLEAN ARCHITECTURAL BOUNDARIES                         │
+├────────────────────────────────┬────────────────────────────────────────────────┤
+│ 1. SETTLEMENT LAYER            │ EVM smart contracts on MST Coral Testnet.      │
+│    (contracts/)                │ Zero PHI on-chain, EIP-712 meta-transactions,  │
+│                                │ Identity Registry RBAC & Consortium Board.     │
+├────────────────────────────────┼────────────────────────────────────────────────┤
+│ 2. APPLICATION ORCHESTRATION   │ FastAPI microservices & multi-agent matching.  │
+│    (backend/app/)              │ Domain models decoupled from blockchain logic, │
+│                                │ SQLite persistence & SHA-256 audit hash-chain. │
+├────────────────────────────────┼────────────────────────────────────────────────┤
+│ 3. DECOUPLED WEB3 BRIDGE       │ Isolated Node.js Viem subprocess bridge.       │
+│    (backend/blockchain-service)│ Shields FastAPI async loop from RPC latency,   │
+│                                │ gas sponsorship & EIP-712 signature digestion. │
+├────────────────────────────────┼────────────────────────────────────────────────┤
+│ 4. PRESENTATION & VERIFICATION │ React 18 coordinator dashboard with human gate │
+│    (frontend/)                 │ and direct browser-to-Coral RPC verification.  │
+├────────────────────────────────┼────────────────────────────────────────────────┤
+│ 5. INDEPENDENT AUDIT HARNESS   │ Standalone zero-backend verification CLI tool  │
+│    (tools/verify-onchain.js)   │ reading raw EVM storage slots via eth_call.    │
+└────────────────────────────────┴────────────────────────────────────────────────┘
+```
+
+### Architectural Dependency Flow
+
+```mermaid
+flowchart TD
+    subgraph Client ["Client & Human Gate"]
+        UI["React 18 Dashboard (frontend/)"]
+        Auditor["External Auditor CLI (tools/)"]
+    end
+
+    subgraph Backend ["Application Layer (backend/)"]
+        API["FastAPI Delivery Controller (app/main.py)"]
+        Auth["RBAC & Anti-Spoofing Guard (app/auth.py)"]
+        Domain["Agent Resource Matcher (app/agents.py)"]
+        DB[("SQLite Audit Hash-Chain (app/db.py)")]
+        Bridge["Viem Subprocess Bridge (blockchain-service.js)"]
+    end
+
+    subgraph Blockchain ["Decentralized Settlement Layer"]
+        CoralRPC["MST Coral Testnet RPC (:54635)"]
+        Contract["MEDwayReservation.sol (0xf8a9...7995)"]
+    end
+
+    UI -->|"HTTP / REST"| API
+    API --> Auth
+    Auth --> Domain
+    Domain --> DB
+    API -->|"Subprocess Boundary (IPC)"| Bridge
+    Bridge -->|"JSON-RPC (Sponsor Gas)"| CoralRPC
+    CoralRPC --> Contract
+
+    %% Trustless Verification Path bypassing backend
+    UI -.->|"Direct eth_call (Bypass Backend)"| CoralRPC
+    Auditor -.->|"Direct eth_call (Zero Backend)"| CoralRPC
+```
+
+### Monorepo Directory Layout
 
 ```text
 blockchain/
-├── 📁 backend/                             # Python FastAPI Backend & Viem Subprocess Bridge
-│   ├── 📁 app/                             # Application core logic & REST API modules
-│   │   ├── __init__.py                     # Module initializer
-│   │   ├── agents.py                       # Multi-agent capacity discovery, scoring & constraint matching
-│   │   ├── auth.py                         # RBAC authentication, API key validation & owner-arbitrator sync
-│   │   ├── blockchain.py                   # Subprocess bridge interfacing with standalone Viem service
-│   │   ├── data.py                         # Mock institutional registries for regional hospitals & labs
-│   │   ├── db.py                           # SQLite schema migrations, persistence & SHA-256 audit hash-chain
-│   │   ├── main.py                         # FastAPI REST endpoints (proposals, commitments, disputes, audit)
-│   │   └── models.py                       # Pydantic v2 schemas for requests, commitments & evidence
-│   ├── 📁 data/                            # Persistent SQLite storage directory
-│   │   └── medway.db                       # Active SQLite database (commitments, proposals & audit logs)
-│   ├── blockchain-service.js               # Standalone Node.js Viem CLI & bridge service (CJS, no Hardhat)
-│   ├── check-coral.js                      # Diagnostic script to test Coral Testnet RPC latency & connectivity
-│   ├── verify-contract-state.js            # Node.js inspection script for live on-chain contract mappings
-│   ├── test-system-verification.py         # Comprehensive 8-module end-to-end system verification suite
-│   ├── test_api_endpoints.py               # Automated test suite for FastAPI REST endpoints & RBAC guards
-│   ├── requirements.txt                    # Python dependencies (FastAPI, Uvicorn, Pydantic, HTTPX)
+├── 📁 backend/                             # Layer 2 & 3: Application Orchestration & Web3 Bridge
+│   ├── 📁 app/                             # Core Python application domain
+│   │   ├── __init__.py                     # Package boundary declaration
+│   │   ├── agents.py                       # Pure domain: multi-agent capacity discovery & offer ranking
+│   │   ├── auth.py                         # Security boundary: RBAC, API credential guard & anti-spoofing
+│   │   ├── blockchain.py                   # IPC adapter: calls Node.js bridge across clean process boundary
+│   │   ├── data.py                         # Seed data: initial hospital & diagnostic facility capacity
+│   │   ├── db.py                           # Persistence boundary: SQLite engine & SHA-256 hash-chained audit
+│   │   ├── main.py                         # Delivery boundary: REST API endpoints with Pydantic validation
+│   │   └── models.py                       # Clean domain entities: request, proposal, commitment schemas
+│   ├── 📁 data/                            # Local database persistence volume
+│   │   └── medway.db                       # Append-only SQLite database file
+│   ├── blockchain-service.js               # Standalone Viem bridge script (CJS, no Hardhat runtime in prod)
+│   ├── check-coral.js                      # Diagnostic probe: tests RPC latency, block height & node health
+│   ├── verify-contract-state.js            # Diagnostic probe: inspects on-chain reservation & registry mappings
+│   ├── test-system-verification.py         # 8-module end-to-end system verification harness
+│   ├── test_api_endpoints.py               # REST API test suite (HTTP status codes, RBAC & anti-spoofing)
+│   ├── requirements.txt                    # Python environment dependencies (FastAPI, Uvicorn, HTTPX)
 │   ├── package.json                        # Node.js dependencies for Viem bridge (viem, dotenv)
-│   └── .env                                # Local environment secrets (relayer & institutional private keys)
+│   └── .env                                # Local environment secrets (relayer & institution private keys)
 │
-├── 📁 contracts/                           # Solidity Smart Contracts, Hardhat 3 & Test Suites
-│   ├── 📁 contracts/                       # EVM Smart Contract source files
-│   │   ├── MEDwayReservation.sol          # Production contract (EIP-712 meta-tx, Identity Registry, Arbitration)
+├── 📁 contracts/                           # Layer 1: Settlement & Consensus Layer (Solidity / Hardhat 3)
+│   ├── 📁 contracts/                       # Smart contract domain source code
+│   │   ├── MEDwayReservation.sol          # Primary contract: EIP-712 meta-tx, Identity Registry, Arbitration
 │   │   ├── Counter.sol                     # Reference sample contract
 │   │   └── Counter.t.sol                   # Foundry unit & fuzz test contract (Solidity tests)
-│   ├── 📁 scripts/                         # Deployment, verification & interaction operational scripts
-│   │   ├── deploy-upgraded-coral.cjs       # Production Coral deployment & initial institution accreditation
+│   ├── 📁 scripts/                         # Operational deployment & interaction runners
+│   │   ├── deploy-upgraded-coral.cjs       # Production deployer & initial institution accreditation runner
 │   │   ├── deploy-medway.ts                # TypeScript deployment script
 │   │   ├── verify-deployment.ts            # Bytecode verification & EIP-712 domain separator validation
-│   │   ├── verify-medway.ts                # On-chain state inspection & reservation status lookup
-│   │   ├── check-coral.ts                  # Coral RPC endpoint reachability and block height verification
+│   │   ├── verify-medway.ts                # Live on-chain status inspection script
+│   │   ├── check-coral.ts                  # Coral RPC endpoint reachability verifier
 │   │   ├── check-coral-signer.ts           # Relayer keystore address & native MST balance verifier
 │   │   ├── relay-coral-reservation.ts      # Live sponsored gasless reservation execution runner
 │   │   ├── relay-reservation.ts            # Generic relayer submission runner
@@ -316,18 +377,18 @@ blockchain/
 │   │   ├── test-security-suite.ts          # Standalone adversarial security verification script
 │   │   ├── test-unauthorized-fulfill.ts    # Unauthorized third-party fulfillment rejection script
 │   │   └── load-env.ts                     # Multi-environment configuration & key loader utility
-│   ├── 📁 test/                            # Automated test specifications
+│   ├── 📁 test/                            # Hardhat test suite specifications
 │   │   ├── MEDwayReservation.ts           # 95-test comprehensive Hardhat suite (Node.js + Foundry viaIR)
 │   │   └── Counter.ts                      # Counter integration test
 │   ├── 📁 ignition/modules/                # Hardhat Ignition deployment configurations
 │   │   └── Counter.ts                      # Deployment module for Counter
-│   ├── hardhat.config.ts                   # Hardhat 3 configuration (Solidity 0.8.34, viaIR, Coral Testnet)
+│   ├── hardhat.config.ts                   # Hardhat 3 config (Solidity 0.8.34, viaIR, Coral Testnet target)
 │   ├── tsconfig.json                       # TypeScript compiler configuration for contract tooling
 │   └── package.json                        # Development dependencies (Hardhat, Viem, Toolbox, Types)
 │
-├── 📁 frontend/                            # React 18 Coordinator Dashboard & Direct RPC Verifier
-│   ├── 📁 src/                             # Application source code
-│   │   ├── App.tsx                         # Reactive coordinator dashboard with Direct RPC Verify widget
+├── 📁 frontend/                            # Layer 4: Presentation & Client-Side Verification Layer
+│   ├── 📁 src/                             # UI application source code
+│   │   ├── App.tsx                         # Coordinator dashboard with Direct RPC Verify widget
 │   │   ├── main.tsx                        # React DOM root entry point
 │   │   └── styles.css                      # Modern responsive healthcare UI design system
 │   ├── index.html                          # Single-page application HTML entry
@@ -335,8 +396,8 @@ blockchain/
 │   ├── tsconfig.json                       # TypeScript compiler options for React JSX
 │   └── package.json                        # Frontend dependencies (React 18, Vite, Lucide Icons)
 │
-├── 📁 tools/                               # Zero-Backend External Auditor Utilities
-│   └── verify-onchain.js                   # Independent on-chain verifier CLI (raw eth_call + SHA-256 terms attestation)
+├── 📁 tools/                               # Layer 5: Independent Trustless Attestation Layer
+│   └── verify-onchain.js                   # Zero-backend auditor CLI (reads raw EVM storage slots via eth_call)
 │
 ├── .env.example                            # Comprehensive environment variables template
 ├── .gitignore                              # Git exclusion rules (secrets, venvs, artifacts & node_modules)
