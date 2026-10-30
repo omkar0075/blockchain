@@ -1,6 +1,14 @@
 import logging
 from .base import BaseAgent
 from .context import AgentContext
+from .registry import (
+    AgentRegistry,
+    clear_registry,
+    default_registry,
+    get_agent,
+    list_agents,
+    register_agent,
+)
 from ..blockchain import get_onchain_capacity
 from ..data import INSTITUTIONS
 from ..models import ResourceRequest, AllocationOffer
@@ -94,3 +102,17 @@ def choose_offer(request: ResourceRequest, offers: list[AllocationOffer]) -> All
         key=lambda offer: (offer.estimated_delivery_hours,
                            offer.available_quantity - request.quantity)
     )[0]
+
+
+__all__ = [
+    "AgentContext",
+    "AgentRegistry",
+    "BaseAgent",
+    "clear_registry",
+    "default_registry",
+    "discover_and_verify",
+    "choose_offer",
+    "get_agent",
+    "list_agents",
+    "register_agent",
+]
