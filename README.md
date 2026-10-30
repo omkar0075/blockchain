@@ -1,6 +1,6 @@
 <div align="center">
 
-# MEDSWARM (MEDway)
+# MEDway
 
 **Autonomous Healthcare Resource Coordination Platform with EIP-712 Gasless On-Chain Commitments on MST Coral Testnet**
 
