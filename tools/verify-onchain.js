@@ -1,14 +1,20 @@
 #!/usr/bin/env node
 /**
- * MEDway Independent On-Chain Verifier
+ * MEDway Independent On-Chain Verifier & Terms Attestation Tool
  * 
  * This tool allows Hospital A, Hospital B, or any external auditor to verify
  * a reservation commitment directly from the MST Coral Testnet RPC without
  * relying on or connecting to MEDway's backend.
  * 
  * Usage:
- *   node tools/verify-onchain.js <reservationId>
+ *   node tools/verify-onchain.js <reservationId> [termsJson]
+ * 
+ * Example:
+ *   node tools/verify-onchain.js 0x70ad9a82d354adc9cceeeed4d5771a971bf005dd18da9308f2bf6baa8598bfe0 '{"proposal_id":"prop-sample-01","provider":"lab-c","quantity":3,"requester":"hospital-a","resource_type":"diagnostic_slot"}'
  */
+
+const crypto = require('crypto');
+const fs = require('fs');
 
 const RPC_URL = process.env.CORAL_RPC_URL || 'https://coralrpc.mstblockchain.com';
 const CONTRACT_ADDRESS = '0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC';
@@ -23,15 +29,32 @@ const STATUS_NAMES = [
   'Disputed',
 ];
 
-async function verifyReservation(reservationId) {
+function canonicalJsonString(obj) {
+  if (typeof obj !== 'object' || obj === null) {
+    return JSON.stringify(obj);
+  }
+  if (Array.isArray(obj)) {
+    return '[' + obj.map(canonicalJsonString).join(',') + ']';
+  }
+  const sortedKeys = Object.keys(obj).sort();
+  const pairs = sortedKeys.map(k => JSON.stringify(k) + ':' + canonicalJsonString(obj[k]));
+  return '{' + pairs.join(',') + '}';
+}
+
+function computeTermsHash(terms) {
+  const canonicalStr = canonicalJsonString(terms);
+  return '0x' + crypto.createHash('sha256').update(canonicalStr, 'utf8').digest('hex');
+}
+
+async function verifyReservation(reservationId, rawTermsInput) {
   if (!reservationId || !reservationId.startsWith('0x') || reservationId.length !== 66) {
     console.error('Error: Please provide a valid 32-byte hex reservationId (e.g. 0x...)');
     process.exit(1);
   }
 
-  console.log('='.repeat(70));
-  console.log(' MEDWAY INDEPENDENT ON-CHAIN VERIFIER (ZERO-BACKEND RELIANCE)');
-  console.log('='.repeat(70));
+  console.log('='.repeat(72));
+  console.log(' MEDWAY INDEPENDENT ON-CHAIN VERIFIER & TERMS ATTESTATION TOOL');
+  console.log('='.repeat(72));
   console.log(`[*] Direct Blockchain RPC:  ${RPC_URL}`);
   console.log(`[*] Target Smart Contract:  ${CONTRACT_ADDRESS}`);
   console.log(`[*] Target Reservation ID:  ${reservationId}\n`);
@@ -105,20 +128,13 @@ async function verifyReservation(reservationId) {
 
   const statusName = STATUS_NAMES[statusCode] || `Unknown (${statusCode})`;
 
-  // Decode text from resourceRef if human-readable
-  let decodedRefText = '';
-  try {
-    const rawRefBytes = Buffer.from(words[1], 'hex');
-    decodedRefText = rawRefBytes.toString('utf8').replace(/\0/g, '').trim();
-  } catch {}
-
   console.log('[+] DIRECT ON-CHAIN CONFIRMATION RECEIVED IN ' + durationMs + 'ms');
-  console.log('-'.repeat(70));
+  console.log('-'.repeat(72));
   console.log(`  Reservation ID:     ${onchainId}`);
   console.log(`  Current Status:     ${statusName.toUpperCase()} (Code: ${statusCode})`);
   console.log(`  Requester Address:  ${requester}`);
   console.log(`  Provider Address:   ${provider}`);
-  console.log(`  Terms Hash (Ref):   ${resourceRef} ${decodedRefText ? `("${decodedRefText}")` : ''}`);
+  console.log(`  On-Chain Terms Hash:${resourceRef}`);
   console.log(`  Expires At:         ${new Date(Number(expiresAt) * 1000).toISOString()} (Unix: ${expiresAt})`);
   console.log(`  Created At:         ${new Date(Number(createdAt) * 1000).toISOString()}`);
   if (fulfilledAt > 0n) {
@@ -128,12 +144,45 @@ async function verifyReservation(reservationId) {
     console.log(`  Disputed By:        ${disputedBy}`);
     console.log(`  Dispute Evidence:   ${disputeEvidence}`);
   }
-  console.log('-'.repeat(70));
-  console.log('[✓] IMMUTABILITY VERIFICATION:');
+  console.log('-'.repeat(72));
+
+  // If terms input is provided, independently verify cryptographic binding
+  if (rawTermsInput) {
+    let parsedTerms;
+    try {
+      if (fs.existsSync(rawTermsInput)) {
+        parsedTerms = JSON.parse(fs.readFileSync(rawTermsInput, 'utf8'));
+      } else {
+        parsedTerms = JSON.parse(rawTermsInput);
+      }
+    } catch (e) {
+      console.warn(`[!] Could not parse terms input as JSON: ${e.message}`);
+    }
+
+    if (parsedTerms) {
+      const computedHash = computeTermsHash(parsedTerms);
+      console.log('[*] CRYPTOGRAPHIC TERMS ATTESTATION:');
+      console.log(`    Claimed Terms JSON:  ${JSON.stringify(parsedTerms)}`);
+      console.log(`    Computed SHA-256:    ${computedHash}`);
+      console.log(`    On-Chain resourceRef:${resourceRef}`);
+
+      if (computedHash.toLowerCase() === resourceRef.toLowerCase()) {
+        console.log('    VERIFICATION RESULT: [✓] 100% MATCH - TERMS MATHEMATICALLY PROVEN UNALTERED\n');
+      } else {
+        console.log('    VERIFICATION RESULT: [!] TAMPER / MISMATCH DETECTED - Terms differ from on-chain hash!\n');
+      }
+    }
+  } else {
+    console.log('[i] Pass terms JSON or file as 2nd argument to mathematically verify terms binding:');
+    console.log(`    node tools/verify-onchain.js ${onchainId} '{"quantity":3,"provider":"lab-c",...}'\n`);
+  }
+
+  console.log('[✓] IMMUTABILITY GUARANTEE:');
   console.log('    1. Terms & Parties are permanently sealed in EVM storage at contract address.');
   console.log('    2. The Solidity contract has NO setter functions for requester, provider, or resourceRef.');
   console.log('    3. Neither party nor MEDway backend can alter terms without creating a new proposal.\n');
 }
 
-const targetId = process.argv[2] || '0xa550bd19b71e87ff0515504c9bf6d2d03e8a428174772650f8305acab0ac7ccf';
-verifyReservation(targetId);
+const targetId = process.argv[2] || '0x70ad9a82d354adc9cceeeed4d5771a971bf005dd18da9308f2bf6baa8598bfe0';
+const termsArg = process.argv[3];
+verifyReservation(targetId, termsArg);

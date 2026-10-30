@@ -295,11 +295,11 @@ def test_independent_rpc_and_terms_immutability():
         "quantity": 3,
         "resource_type": "diagnostic_slot",
     }
-    canonical_hash = "0x" + hashlib.sha256(json.dumps(agreed_terms, sort_keys=True).encode("utf-8")).hexdigest()
+    canonical_hash = "0x" + hashlib.sha256(json.dumps(agreed_terms, sort_keys=True, separators=(',', ':')).encode("utf-8")).hexdigest()
 
     tampered_terms = dict(agreed_terms)
     tampered_terms["quantity"] = 2  # Silent modification attempt!
-    tampered_hash = "0x" + hashlib.sha256(json.dumps(tampered_terms, sort_keys=True).encode("utf-8")).hexdigest()
+    tampered_hash = "0x" + hashlib.sha256(json.dumps(tampered_terms, sort_keys=True, separators=(',', ':')).encode("utf-8")).hexdigest()
 
     assert canonical_hash != tampered_hash, "Hash collision detected!"
     print(f"  [+] Canonical Terms Hash: {canonical_hash}")

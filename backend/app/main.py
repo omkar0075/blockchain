@@ -237,7 +237,7 @@ def authorize_proposal(
         "quantity": proposal["selected_quantity"],
         "urgency": proposal["request"].get("urgency", "urgent"),
     }
-    canonical_terms_str = json.dumps(terms_payload, sort_keys=True)
+    canonical_terms_str = json.dumps(terms_payload, sort_keys=True, separators=(",", ":"))
     terms_hash = "0x" + hashlib.sha256(canonical_terms_str.encode("utf-8")).hexdigest()
     resource_ref = terms_hash
 
