@@ -9,9 +9,9 @@ __pycache__/
 *$py.class
 .pytest_cache/
 
-# Test files and databases (prevent uvicorn watcher reload storms)
-test_*.py
+# Databases & local locks
 *.db
 *.sqlite
 *.sqlite3
 .locks/
+

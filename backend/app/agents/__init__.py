@@ -19,6 +19,7 @@ from .request_agent import (
     RequestAgent,
 )
 from .verification_agent import VerificationAgent
+from .blockchain_agent import BlockchainExecutionAgent, DefaultBlockchainClient
 from .orchestrator import (
     WorkflowOrchestrator,
     WorkflowRecord,
@@ -139,6 +140,7 @@ __all__ = [
     "register_agent",
     "RequestAgent",
     "VerificationAgent",
+    "BlockchainExecutionAgent",
     "WorkflowOrchestrator",
     "WorkflowRecord",
     "WorkflowState",
