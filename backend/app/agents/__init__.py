@@ -10,6 +10,11 @@ from .registry import (
     list_agents,
     register_agent,
 )
+from .request_agent import (
+    BaseRequestParser,
+    DeterministicRequestParser,
+    RequestAgent,
+)
 from ..blockchain import get_onchain_capacity
 from ..data import INSTITUTIONS
 from ..models import ResourceRequest, AllocationOffer
@@ -118,4 +123,7 @@ __all__ = [
     "list_agents",
     "MessageBus",
     "register_agent",
+    "RequestAgent",
+    "BaseRequestParser",
+    "DeterministicRequestParser",
 ]
