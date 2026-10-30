@@ -21,12 +21,19 @@ from .resource_request import (
     ResourceType,
     UrgencyLevel,
 )
+from .verification import (
+    FailedCheck,
+    VerificationChecklist,
+    VerificationResult,
+    VerificationStatus,
+)
 
 __all__ = [
     "AgentError",
     "AgentMessage",
     "AgentResult",
     "AgentStatus",
+    "FailedCheck",
     "GeoCoordinates",
     "LocationArea",
     "NegotiationProposal",
@@ -38,4 +45,7 @@ __all__ = [
     "ResourceRequest",
     "ResourceType",
     "UrgencyLevel",
+    "VerificationChecklist",
+    "VerificationResult",
+    "VerificationStatus",
 ]
