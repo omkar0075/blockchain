@@ -1,6 +1,7 @@
 import logging
 from .base import BaseAgent
 from .context import AgentContext
+from .message_bus import MessageBus, default_bus
 from .registry import (
     AgentRegistry,
     clear_registry,
@@ -109,10 +110,12 @@ __all__ = [
     "AgentRegistry",
     "BaseAgent",
     "clear_registry",
+    "default_bus",
     "default_registry",
     "discover_and_verify",
     "choose_offer",
     "get_agent",
     "list_agents",
+    "MessageBus",
     "register_agent",
 ]
