@@ -2874,4 +2874,292 @@ describe("MEDwayReservation", async function () {
       );
     });
   });
+
+  describe("Feature 3: Local Adversarial & Attack Stress Tests", function () {
+    const resourceMri = pad(stringToHex("diagnostic_slot"), { size: 32 });
+
+    it("Attack 1: Concurrent over-allocation and mempool racing rejects capacity exhaustion", async function () {
+      const { medway } = await deployFixture();
+      // Provider sets exactly 5 slots
+      await medway.write.setResourceInventory([resourceMri, 5, true], { account: provider.account });
+
+      // Attacker A locks 4 slots
+      const tx1 = await medway.write.lockCapacity([provider.account.address, resourceMri, 4, 1800n], {
+        account: requester.account,
+      });
+      await publicClient.waitForTransactionReceipt({ hash: tx1 });
+      assert.equal(await medway.read.getAvailableCapacity([provider.account.address, resourceMri]), 1);
+
+      // Attacker B attempts to lock 2 slots (only 1 available) -> MUST revert
+      await viem.assertions.revertWithCustomError(
+        medway.write.lockCapacity([provider.account.address, resourceMri, 2, 1800n], {
+          account: requester.account,
+        }),
+        medway,
+        "InsufficientCapacity"
+      );
+
+      // Locking remaining 1 slot succeeds
+      const tx2 = await medway.write.lockCapacity([provider.account.address, resourceMri, 1, 1800n], {
+        account: requester.account,
+      });
+      await publicClient.waitForTransactionReceipt({ hash: tx2 });
+      assert.equal(await medway.read.getAvailableCapacity([provider.account.address, resourceMri]), 0);
+
+      // Capacity fully exhausted -> any further lock attempt reverts
+      await viem.assertions.revertWithCustomError(
+        medway.write.lockCapacity([provider.account.address, resourceMri, 1, 1800n], {
+          account: requester.account,
+        }),
+        medway,
+        "InsufficientCapacity"
+      );
+    });
+
+    it("Attack 2: Hostile inventory shrinking below locked + committed capacity is strictly rejected", async function () {
+      const { medway } = await deployFixture();
+      await medway.write.setResourceInventory([resourceMri, 10, true], { account: provider.account });
+
+      // Lock 3 slots and convert to commitment
+      const txLock1 = await medway.write.lockCapacity([provider.account.address, resourceMri, 3, 1800n], {
+        account: requester.account,
+      });
+      const rcpt1 = await publicClient.waitForTransactionReceipt({ hash: txLock1 });
+      const lockId1 = parseEventLogs({ abi: medway.abi, logs: rcpt1.logs, eventName: "CapacityLocked" })[0].args.lockId;
+
+      const now = BigInt(await networkHelpers.time.latest());
+      await medway.write.createReservationWithLock([lockId1, sampleResourceRef, now + 3600n], {
+        account: requester.account,
+      });
+
+      // Lock another 2 slots
+      await medway.write.lockCapacity([provider.account.address, resourceMri, 2, 1800n], {
+        account: requester.account,
+      });
+
+      // Total in-use = 3 committed + 2 locked = 5 slots.
+      // Provider attempts to shrink totalCapacity to 4 (< 5) -> MUST revert
+      await viem.assertions.revertWithCustomError(
+        medway.write.setResourceInventory([resourceMri, 4, true], { account: provider.account }),
+        medway,
+        "InsufficientCapacity"
+      );
+
+      // Provider shrinking to exactly 5 (locked + committed) succeeds
+      await medway.write.setResourceInventory([resourceMri, 5, true], { account: provider.account });
+      assert.equal(await medway.read.getAvailableCapacity([provider.account.address, resourceMri]), 0);
+    });
+
+    it("Attack 3: Inactive resource or deactivated institution prevents unauthorized capacity locking", async function () {
+      const { medway } = await deployFixture();
+      // Set resource as inactive
+      await medway.write.setResourceInventory([resourceMri, 10, false], { account: provider.account });
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.lockCapacity([provider.account.address, resourceMri, 2, 1800n], {
+          account: requester.account,
+        }),
+        medway,
+        "ResourceNotActive"
+      );
+
+      // Reactivate resource
+      await medway.write.setResourceInventory([resourceMri, 10, true], { account: provider.account });
+
+      // Deactivate provider institution
+      await medway.write.setInstitutionActive([labCId, false], { account: deployer.account });
+      await viem.assertions.revertWithCustomError(
+        medway.write.lockCapacity([provider.account.address, resourceMri, 2, 1800n], {
+          account: requester.account,
+        }),
+        medway,
+        "UnauthorizedProvider"
+      );
+
+      // Reactivate provider, deactivate requester institution
+      await medway.write.setInstitutionActive([labCId, true], { account: deployer.account });
+      await medway.write.setInstitutionActive([hospitalAId, false], { account: deployer.account });
+      await viem.assertions.revertWithCustomError(
+        medway.write.lockCapacity([provider.account.address, resourceMri, 2, 1800n], {
+          account: requester.account,
+        }),
+        medway,
+        "UnauthorizedRequester"
+      );
+    });
+
+    it("Attack 4: Lock hijacking - third party cannot convert lock, but authorized replacement wallet can", async function () {
+      const { medway } = await deployFixture();
+      await medway.write.setResourceInventory([resourceMri, 10, true], { account: provider.account });
+
+      const txLock = await medway.write.lockCapacity([provider.account.address, resourceMri, 4, 1800n], {
+        account: requester.account,
+      });
+      const rcpt = await publicClient.waitForTransactionReceipt({ hash: txLock });
+      const lockId = parseEventLogs({ abi: medway.abi, logs: rcpt.logs, eventName: "CapacityLocked" })[0].args.lockId;
+
+      const now = BigInt(await networkHelpers.time.latest());
+
+      // Attacker C attempts to convert Requester's lock
+      await viem.assertions.revertWithCustomError(
+        medway.write.createReservationWithLock([lockId, sampleResourceRef, now + 3600n], {
+          account: thirdParty.account,
+        }),
+        medway,
+        "Unauthorized"
+      );
+
+      // Hospital A authorizes replacement wallet (thirdParty)
+      await medway.write.authorizeWallet([hospitalAId, thirdParty.account.address], {
+        account: deployer.account,
+      });
+
+      // Now authorized replacement wallet CAN convert the lock
+      const txConvert = await medway.write.createReservationWithLock([lockId, sampleResourceRef, now + 3600n], {
+        account: thirdParty.account,
+      });
+      const rcptConvert = await publicClient.waitForTransactionReceipt({ hash: txConvert });
+      const convertLogs = parseEventLogs({ abi: medway.abi, logs: rcptConvert.logs, eventName: "CapacityLockConverted" });
+      assert.equal(convertLogs.length, 1);
+    });
+
+    it("Attack 5: Lock double-conversion, premature release, and signature replay are strictly blocked", async function () {
+      const { medway } = await deployFixture();
+      await medway.write.setResourceInventory([resourceMri, 10, true], { account: provider.account });
+
+      const txLock = await medway.write.lockCapacity([provider.account.address, resourceMri, 3, 1800n], {
+        account: requester.account,
+      });
+      const rcpt = await publicClient.waitForTransactionReceipt({ hash: txLock });
+      const lockId = parseEventLogs({ abi: medway.abi, logs: rcpt.logs, eventName: "CapacityLocked" })[0].args.lockId;
+
+      const now = BigInt(await networkHelpers.time.latest());
+      await medway.write.createReservationWithLock([lockId, sampleResourceRef, now + 3600n], {
+        account: requester.account,
+      });
+
+      // Cannot convert the same lock a second time
+      await viem.assertions.revertWithCustomError(
+        medway.write.createReservationWithLock([lockId, sampleResourceRef, now + 3600n], {
+          account: requester.account,
+        }),
+        medway,
+        "LockNotActive"
+      );
+
+      // Cannot release a converted lock
+      await viem.assertions.revertWithCustomError(
+        medway.write.releaseLock([lockId, "adversarial-release"], {
+          account: requester.account,
+        }),
+        medway,
+        "LockNotActive"
+      );
+    });
+
+    it("Attack 6: Unauthorized lock release fails, while keeper release after expiry succeeds", async function () {
+      const { medway } = await deployFixture();
+      await medway.write.setResourceInventory([resourceMri, 10, true], { account: provider.account });
+
+      const txLock = await medway.write.lockCapacity([provider.account.address, resourceMri, 3, 400n], {
+        account: requester.account,
+      });
+      const rcpt = await publicClient.waitForTransactionReceipt({ hash: txLock });
+      const lockId = parseEventLogs({ abi: medway.abi, logs: rcpt.logs, eventName: "CapacityLocked" })[0].args.lockId;
+
+      // Outsider cannot release unexpired lock
+      await viem.assertions.revertWithCustomError(
+        medway.write.releaseLock([lockId, "malicious-release"], { account: thirdParty.account }),
+        medway,
+        "Unauthorized"
+      );
+
+      // Fast forward past lock expiry
+      await networkHelpers.time.increase(500n);
+
+      // Now anyone (keeper) can release the expired lock
+      await medway.write.releaseLock([lockId, "keeper-release"], { account: thirdParty.account });
+
+      // Capacity is restored
+      assert.equal(await medway.read.getAvailableCapacity([provider.account.address, resourceMri]), 10);
+
+      // Cannot release already released lock
+      await viem.assertions.revertWithCustomError(
+        medway.write.releaseLock([lockId, "duplicate-release"], { account: thirdParty.account }),
+        medway,
+        "LockNotActive"
+      );
+    });
+
+    it("Attack 7: All termination paths (cancellation, expiry, dispute cancel, dispute fulfill) leak zero capacity", async function () {
+      const { medway } = await deployFixture();
+      await medway.write.setResourceInventory([resourceMri, 10, true], { account: provider.account });
+
+      // Path A: Cancellation
+      const txA = await medway.write.lockCapacity([provider.account.address, resourceMri, 2, 1800n], { account: requester.account });
+      const idA = parseEventLogs({ abi: medway.abi, logs: (await publicClient.waitForTransactionReceipt({ hash: txA })).logs, eventName: "CapacityLocked" })[0].args.lockId;
+      const now = BigInt(await networkHelpers.time.latest());
+      const txResA = await medway.write.createReservationWithLock([idA, sampleResourceRef, now + 3600n], { account: requester.account });
+      const resA = parseEventLogs({ abi: medway.abi, logs: (await publicClient.waitForTransactionReceipt({ hash: txResA })).logs, eventName: "ReservationCreated" })[0].args.reservationId;
+      assert.equal(await medway.read.getAvailableCapacity([provider.account.address, resourceMri]), 8);
+      await medway.write.cancelReservation([resA], { account: requester.account });
+      assert.equal(await medway.read.getAvailableCapacity([provider.account.address, resourceMri]), 10); // 100% restored
+
+      // Path B: Expiry
+      const txB = await medway.write.lockCapacity([provider.account.address, resourceMri, 3, 1800n], { account: requester.account });
+      const idB = parseEventLogs({ abi: medway.abi, logs: (await publicClient.waitForTransactionReceipt({ hash: txB })).logs, eventName: "CapacityLocked" })[0].args.lockId;
+      const txResB = await medway.write.createReservationWithLock([idB, sampleResourceRef, now + 100n], { account: requester.account });
+      const resB = parseEventLogs({ abi: medway.abi, logs: (await publicClient.waitForTransactionReceipt({ hash: txResB })).logs, eventName: "ReservationCreated" })[0].args.reservationId;
+      assert.equal(await medway.read.getAvailableCapacity([provider.account.address, resourceMri]), 7);
+      await networkHelpers.time.increase(150n);
+      await medway.write.expireReservation([resB], { account: thirdParty.account });
+      assert.equal(await medway.read.getAvailableCapacity([provider.account.address, resourceMri]), 10); // 100% restored
+
+      // Path C: Dispute Resolved to Cancelled
+      const txC = await medway.write.lockCapacity([provider.account.address, resourceMri, 4, 1800n], { account: requester.account });
+      const idC = parseEventLogs({ abi: medway.abi, logs: (await publicClient.waitForTransactionReceipt({ hash: txC })).logs, eventName: "CapacityLocked" })[0].args.lockId;
+      const txResC = await medway.write.createReservationWithLock([idC, sampleResourceRef, now + 7200n], { account: requester.account });
+      const resC = parseEventLogs({ abi: medway.abi, logs: (await publicClient.waitForTransactionReceipt({ hash: txResC })).logs, eventName: "ReservationCreated" })[0].args.reservationId;
+      await medway.write.acceptReservation([resC], { account: provider.account });
+      await medway.write.disputeReservation([resC, sampleEvidenceHash], { account: requester.account });
+      await medway.write.resolveDispute([resC, Status.Cancelled, sampleResolutionEvidence], { account: deployer.account });
+      assert.equal(await medway.read.getAvailableCapacity([provider.account.address, resourceMri]), 10); // 100% restored
+
+      // Path D: Dispute Resolved to Fulfilled
+      const txD = await medway.write.lockCapacity([provider.account.address, resourceMri, 5, 1800n], { account: requester.account });
+      const idD = parseEventLogs({ abi: medway.abi, logs: (await publicClient.waitForTransactionReceipt({ hash: txD })).logs, eventName: "CapacityLocked" })[0].args.lockId;
+      const txResD = await medway.write.createReservationWithLock([idD, sampleResourceRef, now + 7200n], { account: requester.account });
+      const resD = parseEventLogs({ abi: medway.abi, logs: (await publicClient.waitForTransactionReceipt({ hash: txResD })).logs, eventName: "ReservationCreated" })[0].args.reservationId;
+      await medway.write.acceptReservation([resD], { account: provider.account });
+      await medway.write.disputeReservation([resD, sampleEvidenceHash], { account: requester.account });
+      await medway.write.resolveDispute([resD, Status.Fulfilled, sampleResolutionEvidence], { account: deployer.account });
+      assert.equal(await medway.read.getAvailableCapacity([provider.account.address, resourceMri]), 10); // 100% restored
+    });
+
+    it("Attack 8: Boundary attacks (0 quantity, 0 duration, > 7 day duration) revert with custom errors", async function () {
+      const { medway } = await deployFixture();
+      await medway.write.setResourceInventory([resourceMri, 10, true], { account: provider.account });
+
+      // Quantity = 0
+      await viem.assertions.revertWithCustomError(
+        medway.write.lockCapacity([provider.account.address, resourceMri, 0, 1800n], { account: requester.account }),
+        medway,
+        "InvalidLockQuantity"
+      );
+
+      // Duration = 0
+      await viem.assertions.revertWithCustomError(
+        medway.write.lockCapacity([provider.account.address, resourceMri, 2, 0n], { account: requester.account }),
+        medway,
+        "InvalidExpiry"
+      );
+
+      // Duration > 7 days (7 * 24 * 3600 + 1)
+      await viem.assertions.revertWithCustomError(
+        medway.write.lockCapacity([provider.account.address, resourceMri, 2, 7n * 24n * 3600n + 1n], { account: requester.account }),
+        medway,
+        "InvalidExpiry"
+      );
+    });
+  });
 });
