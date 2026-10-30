@@ -85,6 +85,19 @@ contract MEDwayReservation {
     mapping(bytes32 => bool) public institutionExists;
     mapping(address => WalletInfo) public wallets;
 
+    // Consortium Arbitration Board
+    mapping(address => bool) public isArbitrator;
+    uint256 public arbitratorCount;
+    uint256 public requiredArbitrationQuorum;
+
+    struct DisputeRuling {
+        uint32 fulfilledVotes;
+        uint32 cancelledVotes;
+        bool isResolved;
+        mapping(address => bool) hasVoted;
+    }
+    mapping(bytes32 => DisputeRuling) private disputeRulings;
+
     // Events - Reservations
     event ReservationCreated(
         bytes32 indexed reservationId,
@@ -142,6 +155,17 @@ contract MEDwayReservation {
         bool isProvider
     );
 
+    // Events - Consortium Arbitration
+    event ArbitratorAdded(address indexed arbitrator);
+    event ArbitratorRemoved(address indexed arbitrator);
+    event ArbitrationQuorumUpdated(uint256 newQuorum);
+    event DisputeVoteCast(
+        bytes32 indexed reservationId,
+        address indexed arbitrator,
+        Status ruling,
+        bytes32 rulingEvidence
+    );
+
     // Errors
     error Unauthorized();
     error InvalidAddress();
@@ -165,13 +189,29 @@ contract MEDwayReservation {
     error UnauthorizedRequester();
     error UnauthorizedProvider();
 
+    // Arbitration Errors
+    error ArbitratorAlreadyAdded();
+    error ArbitratorNotFound();
+    error InvalidQuorum();
+    error AlreadyVoted();
+
     modifier onlyOwner() {
         if (msg.sender != owner) revert Unauthorized();
         _;
     }
 
+    modifier onlyArbitrator() {
+        if (!isArbitrator[msg.sender] && msg.sender != owner) revert Unauthorized();
+        _;
+    }
+
     constructor() {
         owner = msg.sender;
+        isArbitrator[msg.sender] = true;
+        arbitratorCount = 1;
+        requiredArbitrationQuorum = 1;
+        emit ArbitratorAdded(msg.sender);
+
         _CACHED_CHAIN_ID = block.chainid;
         _CACHED_THIS = address(this);
         _CACHED_DOMAIN_SEPARATOR = _buildDomainSeparator();
@@ -356,6 +396,37 @@ contract MEDwayReservation {
             inst.isActive,
             inst.registeredAt
         );
+    }
+
+    // -------------------------------------------------------------------
+    // Consortium Arbitration Governance
+    // -------------------------------------------------------------------
+
+    /// @notice Add a new arbitrator to the consortium board.
+    function addArbitrator(address arbitrator) external onlyOwner {
+        if (arbitrator == address(0)) revert InvalidAddress();
+        if (isArbitrator[arbitrator]) revert ArbitratorAlreadyAdded();
+
+        isArbitrator[arbitrator] = true;
+        arbitratorCount++;
+        emit ArbitratorAdded(arbitrator);
+    }
+
+    /// @notice Remove an arbitrator from the consortium board.
+    function removeArbitrator(address arbitrator) external onlyOwner {
+        if (!isArbitrator[arbitrator]) revert ArbitratorNotFound();
+        if (arbitratorCount - 1 < requiredArbitrationQuorum) revert InvalidQuorum();
+
+        isArbitrator[arbitrator] = false;
+        arbitratorCount--;
+        emit ArbitratorRemoved(arbitrator);
+    }
+
+    /// @notice Set the required voting quorum for dispute resolution.
+    function setArbitrationQuorum(uint256 newQuorum) external onlyOwner {
+        if (newQuorum == 0 || newQuorum > arbitratorCount) revert InvalidQuorum();
+        requiredArbitrationQuorum = newQuorum;
+        emit ArbitrationQuorumUpdated(newQuorum);
     }
 
     // -------------------------------------------------------------------
@@ -645,13 +716,57 @@ contract MEDwayReservation {
         return (w.isActive && w.institutionId == provInstId && institutions[provInstId].isActive);
     }
 
-    /// @notice Authorized consortium owner/arbitrator resolves an active dispute.
+    /// @notice Cast a vote on a disputed reservation. If votes reach quorum, dispute is automatically finalized.
+    function castArbitrationVote(
+        bytes32 reservationId,
+        Status ruling,
+        bytes32 rulingEvidence
+    ) external onlyArbitrator {
+        Reservation storage r = _get(reservationId);
+        if (r.status != Status.Disputed) revert InvalidStatus();
+        if (ruling != Status.Fulfilled && ruling != Status.Cancelled) revert InvalidStatus();
+        if (rulingEvidence == bytes32(0)) revert InvalidEvidence();
+
+        DisputeRuling storage dr = disputeRulings[reservationId];
+        if (dr.isResolved) revert InvalidStatus();
+        if (dr.hasVoted[msg.sender]) revert AlreadyVoted();
+
+        dr.hasVoted[msg.sender] = true;
+        emit DisputeVoteCast(reservationId, msg.sender, ruling, rulingEvidence);
+
+        if (ruling == Status.Fulfilled) {
+            dr.fulfilledVotes++;
+            if (dr.fulfilledVotes >= requiredArbitrationQuorum) {
+                dr.isResolved = true;
+                r.status = Status.Fulfilled;
+                emit ReservationDisputeResolved(
+                    reservationId,
+                    msg.sender,
+                    Status.Fulfilled,
+                    rulingEvidence
+                );
+            }
+        } else if (ruling == Status.Cancelled) {
+            dr.cancelledVotes++;
+            if (dr.cancelledVotes >= requiredArbitrationQuorum) {
+                dr.isResolved = true;
+                r.status = Status.Cancelled;
+                emit ReservationDisputeResolved(
+                    reservationId,
+                    msg.sender,
+                    Status.Cancelled,
+                    rulingEvidence
+                );
+            }
+        }
+    }
+
+    /// @notice Authorized consortium owner/arbitrator resolves an active dispute directly when quorum is 1.
     function resolveDispute(
         bytes32 reservationId,
         Status resolution,
         bytes32 resolutionEvidence
-    ) external {
-        if (msg.sender != owner) revert Unauthorized();
+    ) external onlyArbitrator {
         Reservation storage r = _get(reservationId);
         if (r.status != Status.Disputed) revert InvalidStatus();
         if (
@@ -659,14 +774,39 @@ contract MEDwayReservation {
             resolution != Status.Cancelled
         ) revert InvalidStatus();
         if (resolutionEvidence == bytes32(0)) revert InvalidEvidence();
+        if (requiredArbitrationQuorum > 1) {
+            revert InvalidQuorum();
+        }
+
+        DisputeRuling storage dr = disputeRulings[reservationId];
+        dr.isResolved = true;
+        if (resolution == Status.Fulfilled) dr.fulfilledVotes++;
+        else dr.cancelledVotes++;
+        dr.hasVoted[msg.sender] = true;
 
         r.status = resolution;
+        emit DisputeVoteCast(reservationId, msg.sender, resolution, resolutionEvidence);
         emit ReservationDisputeResolved(
             reservationId,
             msg.sender,
             resolution,
             resolutionEvidence
         );
+    }
+
+    /// @notice Retrieve arbitration voting state for a reservation.
+    function getDisputeRuling(bytes32 reservationId) external view returns (
+        uint32 fulfilledVotes,
+        uint32 cancelledVotes,
+        bool isResolved
+    ) {
+        DisputeRuling storage dr = disputeRulings[reservationId];
+        return (dr.fulfilledVotes, dr.cancelledVotes, dr.isResolved);
+    }
+
+    /// @notice Check if a specific arbitrator has voted on a reservation dispute.
+    function hasArbitratorVoted(bytes32 reservationId, address arbitrator) external view returns (bool) {
+        return disputeRulings[reservationId].hasVoted[arbitrator];
     }
 
     function _recoverSigner(

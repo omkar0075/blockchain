@@ -2326,4 +2326,236 @@ describe("MEDwayReservation", async function () {
       );
     });
   });
+
+  describe("Consortium Arbitration Board (Governance Item D)", async function () {
+    const wallets = await viem.getWalletClients();
+    const arbitrator1 = wallets[4] || wallets[3];
+    const arbitrator2 = wallets[5] || wallets[2];
+
+    it("Should initialize contract with deployer as sole arbitrator and quorum of 1", async function () {
+      const { medway } = await deployFixture();
+      const count = await medway.read.arbitratorCount();
+      const quorum = await medway.read.requiredArbitrationQuorum();
+      const isDeployerArbitrator = await medway.read.isArbitrator([deployer.account.address]);
+
+      assert.equal(count, 1n);
+      assert.equal(quorum, 1n);
+      assert.equal(isDeployerArbitrator, true);
+    });
+
+    it("Should allow owner to add consortium arbitrators and emit ArbitratorAdded", async function () {
+      const { medway } = await deployFixture();
+
+      const tx = await medway.write.addArbitrator([arbitrator1.account.address], { account: deployer.account });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: tx });
+      const logs = parseEventLogs({
+        abi: medway.abi,
+        logs: receipt.logs,
+        eventName: "ArbitratorAdded",
+      });
+      assert.equal(logs.length, 1);
+      assert.equal(logs[0].args.arbitrator.toLowerCase(), arbitrator1.account.address.toLowerCase());
+
+      const count = await medway.read.arbitratorCount();
+      assert.equal(count, 2n);
+      assert.equal(await medway.read.isArbitrator([arbitrator1.account.address]), true);
+
+      // Revert if non-owner attempts to add
+      await viem.assertions.revertWithCustomError(
+        medway.write.addArbitrator([arbitrator2.account.address], { account: thirdParty.account }),
+        medway,
+        "Unauthorized"
+      );
+
+      // Revert if adding already added arbitrator
+      await viem.assertions.revertWithCustomError(
+        medway.write.addArbitrator([arbitrator1.account.address], { account: deployer.account }),
+        medway,
+        "ArbitratorAlreadyAdded"
+      );
+
+      // Revert if zero address
+      await viem.assertions.revertWithCustomError(
+        medway.write.addArbitrator([zeroAddress], { account: deployer.account }),
+        medway,
+        "InvalidAddress"
+      );
+    });
+
+    it("Should allow owner to set arbitration quorum and emit ArbitrationQuorumUpdated", async function () {
+      const { medway } = await deployFixture();
+      await medway.write.addArbitrator([arbitrator1.account.address], { account: deployer.account });
+      await medway.write.addArbitrator([arbitrator2.account.address], { account: deployer.account });
+
+      const tx = await medway.write.setArbitrationQuorum([2n], { account: deployer.account });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: tx });
+      const logs = parseEventLogs({
+        abi: medway.abi,
+        logs: receipt.logs,
+        eventName: "ArbitrationQuorumUpdated",
+      });
+      assert.equal(logs.length, 1);
+      assert.equal(logs[0].args.newQuorum, 2n);
+
+      assert.equal(await medway.read.requiredArbitrationQuorum(), 2n);
+
+      // Cannot set quorum to 0
+      await viem.assertions.revertWithCustomError(
+        medway.write.setArbitrationQuorum([0n], { account: deployer.account }),
+        medway,
+        "InvalidQuorum"
+      );
+
+      // Cannot set quorum > arbitratorCount
+      await viem.assertions.revertWithCustomError(
+        medway.write.setArbitrationQuorum([4n], { account: deployer.account }),
+        medway,
+        "InvalidQuorum"
+      );
+
+      // Non-owner cannot update quorum
+      await viem.assertions.revertWithCustomError(
+        medway.write.setArbitrationQuorum([1n], { account: thirdParty.account }),
+        medway,
+        "Unauthorized"
+      );
+    });
+
+    it("Should allow owner to remove an arbitrator and protect quorum", async function () {
+      const { medway } = await deployFixture();
+      await medway.write.addArbitrator([arbitrator1.account.address], { account: deployer.account });
+      await medway.write.addArbitrator([arbitrator2.account.address], { account: deployer.account });
+      await medway.write.setArbitrationQuorum([3n], { account: deployer.account });
+
+      // Cannot remove arbitrator if count would drop below required quorum (3)
+      await viem.assertions.revertWithCustomError(
+        medway.write.removeArbitrator([arbitrator2.account.address], { account: deployer.account }),
+        medway,
+        "InvalidQuorum"
+      );
+
+      // Lower quorum first to 2
+      await medway.write.setArbitrationQuorum([2n], { account: deployer.account });
+
+      // Now removal succeeds
+      const tx = await medway.write.removeArbitrator([arbitrator2.account.address], { account: deployer.account });
+      const receipt = await publicClient.waitForTransactionReceipt({ hash: tx });
+      const logs = parseEventLogs({
+        abi: medway.abi,
+        logs: receipt.logs,
+        eventName: "ArbitratorRemoved",
+      });
+      assert.equal(logs.length, 1);
+      assert.equal(logs[0].args.arbitrator.toLowerCase(), arbitrator2.account.address.toLowerCase());
+
+      assert.equal(await medway.read.arbitratorCount(), 2n);
+      assert.equal(await medway.read.isArbitrator([arbitrator2.account.address]), false);
+
+      // Cannot remove non-arbitrator
+      await viem.assertions.revertWithCustomError(
+        medway.write.removeArbitrator([thirdParty.account.address], { account: deployer.account }),
+        medway,
+        "ArbitratorNotFound"
+      );
+    });
+
+    it("Multi-arbitrator voting (2-of-3 quorum): auto-resolves once quorum is reached", async function () {
+      const { medway } = await deployFixture();
+      await medway.write.addArbitrator([arbitrator1.account.address], { account: deployer.account });
+      await medway.write.addArbitrator([arbitrator2.account.address], { account: deployer.account });
+      await medway.write.setArbitrationQuorum([2n], { account: deployer.account });
+
+      const { reservationId } = await createSampleReservation(medway);
+      await medway.write.acceptReservation([reservationId], { account: provider.account });
+      await medway.write.disputeReservation([reservationId, sampleEvidenceHash], { account: requester.account });
+
+      // Direct resolveDispute should revert with InvalidQuorum because quorum > 1
+      await viem.assertions.revertWithCustomError(
+        medway.write.resolveDispute([reservationId, Status.Fulfilled, sampleResolutionEvidence], { account: deployer.account }),
+        medway,
+        "InvalidQuorum"
+      );
+
+      // Arbitrator 1 votes to Cancel
+      const vote1Tx = await medway.write.castArbitrationVote(
+        [reservationId, Status.Cancelled, sampleResolutionEvidence],
+        { account: arbitrator1.account }
+      );
+      const vote1Receipt = await publicClient.waitForTransactionReceipt({ hash: vote1Tx });
+      const vote1Logs = parseEventLogs({
+        abi: medway.abi,
+        logs: vote1Receipt.logs,
+        eventName: "DisputeVoteCast",
+      });
+      assert.equal(vote1Logs.length, 1);
+      assert.equal(vote1Logs[0].args.ruling, Status.Cancelled);
+
+      // Status should still be Disputed, not yet resolved
+      let res = await medway.read.reservations([reservationId]);
+      assert.equal(res[5], Status.Disputed);
+
+      let ruling = await medway.read.getDisputeRuling([reservationId]);
+      assert.equal(ruling[0], 0); // fulfilledVotes
+      assert.equal(ruling[1], 1); // cancelledVotes
+      assert.equal(ruling[2], false); // isResolved
+
+      // Arbitrator 1 cannot double vote
+      await viem.assertions.revertWithCustomError(
+        medway.write.castArbitrationVote(
+          [reservationId, Status.Cancelled, sampleResolutionEvidence],
+          { account: arbitrator1.account }
+        ),
+        medway,
+        "AlreadyVoted"
+      );
+
+      // Arbitrator 2 casts second vote for Cancelled -> reaching quorum (2)
+      const vote2Tx = await medway.write.castArbitrationVote(
+        [reservationId, Status.Cancelled, sampleResolutionEvidence],
+        { account: arbitrator2.account }
+      );
+      const vote2Receipt = await publicClient.waitForTransactionReceipt({ hash: vote2Tx });
+      const resolvedLogs = parseEventLogs({
+        abi: medway.abi,
+        logs: vote2Receipt.logs,
+        eventName: "ReservationDisputeResolved",
+      });
+      assert.equal(resolvedLogs.length, 1);
+      assert.equal(resolvedLogs[0].args.resolutionStatus, Status.Cancelled);
+
+      // Now status is Cancelled
+      res = await medway.read.reservations([reservationId]);
+      assert.equal(res[5], Status.Cancelled);
+
+      ruling = await medway.read.getDisputeRuling([reservationId]);
+      assert.equal(ruling[1], 2);
+      assert.equal(ruling[2], true); // isResolved
+
+      // Cannot vote after dispute has been resolved
+      await viem.assertions.revertWithCustomError(
+        medway.write.castArbitrationVote(
+          [reservationId, Status.Cancelled, sampleResolutionEvidence],
+          { account: deployer.account }
+        ),
+        medway,
+        "InvalidStatus"
+      );
+    });
+
+    it("Rejects arbitration voting by unauthorized parties", async function () {
+      const { medway } = await deployFixture();
+      const { reservationId } = await createSampleReservation(medway);
+      await medway.write.acceptReservation([reservationId], { account: provider.account });
+      await medway.write.disputeReservation([reservationId, sampleEvidenceHash], { account: requester.account });
+
+      await viem.assertions.revertWithCustomError(
+        medway.write.castArbitrationVote(
+          [reservationId, Status.Fulfilled, sampleResolutionEvidence],
+          { account: thirdParty.account }
+        ),
+        medway,
+        "Unauthorized"
+      );
+    });
+  });
 });

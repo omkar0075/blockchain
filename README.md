@@ -9,7 +9,7 @@
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI_Python_3.11+-009688?style=for-the-badge&logo=fastapi&logoColor=white)](https://fastapi.tiangolo.com/)
 [![Viem](https://img.shields.io/badge/Web3_Bridge-Viem_v2.57-black?style=for-the-badge&logo=v&logoColor=white)](https://viem.sh)
 [![React 18](https://img.shields.io/badge/Frontend-React_18_Vite-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
-[![Hardhat Tests](https://img.shields.io/badge/Hardhat_Tests-89%2F89_Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white)](contracts/test)
+[![Hardhat Tests](https://img.shields.io/badge/Hardhat_Tests-95%2F95_Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white)](contracts/test)
 [![Verification Suite](https://img.shields.io/badge/System_Verification-8%2F8_Passing-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](backend/test-system-verification.py)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 
@@ -248,16 +248,23 @@ stateDiagram-v2
 | `authorizeWallet(id, wallet)` | Contract Owner | Authorizes additional wallet for registered institution | ~45,000 |
 | `revokeWallet(wallet)` | Contract Owner | Revokes individual institutional wallet access | ~28,000 |
 | `setInstitutionActive(id, active)` | Contract Owner | Pauses or re-activates entire institution | ~30,000 |
+| `setInstitutionRole(id, newRole)` | Contract Owner | Updates accredited institutional role with event | ~32,000 |
+| `rotateReservationWallet(id, new)` | Institution / Owner | Key rotation on active commitment without disruption | ~36,000 |
+| `addArbitrator(wallet)` | Contract Owner | Appoints member to Consortium Arbitration Board | ~46,000 |
+| `removeArbitrator(wallet)` | Contract Owner | Removes member while enforcing quorum safety | ~29,000 |
+| `setArbitrationQuorum(quorum)` | Contract Owner | Configures multi-party arbitration voting threshold | ~28,000 |
+| `castArbitrationVote(id, ruling, ...)`| Board Arbitrator | Multi-party dispute vote; auto-finalizes at quorum | ~52,000 |
+| `getDisputeRuling(id)` | Public View | View dispute vote tallies and resolution status | Free (0 gas) |
 | `getInstitutionByWallet(wallet)` | Public View | Look up institution ID, name, role, and active status | Free (0 gas) |
 | `isRequesterWallet(wallet)` | Public View | Checks if wallet is accredited active requester | Free (0 gas) |
 | `isProviderWallet(wallet)` | Public View | Checks if wallet is accredited active provider | Free (0 gas) |
 | `createReservationWithSig(...)` | Public (Relayer) | Creates proposal with EIP-712 requester signature | ~185,000 |
 | `acceptReservationWithSig(...)` | Public (Relayer) | Accepts proposal with EIP-712 provider signature | ~42,000 |
-| `fulfillReservation(id)` | Provider Only | Attests real-world resource delivery | ~38,000 |
+| `fulfillReservation(id)` | Provider Wallet | Attests real-world resource delivery (resilient) | ~38,000 |
 | `cancelReservation(id)` | Requester / Provider | Cancels reservation before expiration | ~34,000 |
 | `expireReservation(id)` | Anyone (Keeper) | Flags unaccepted reservation past `expiresAt` | ~31,000 |
 | `disputeReservation(id, hash)` | Requester / Provider | Opens dispute with cryptographic evidence hash | ~48,000 |
-| `resolveDispute(id, outcome, ...)`| Owner / Arbiter | Resolves active dispute to Fulfilled/Cancelled | ~45,000 |
+| `resolveDispute(id, outcome, ...)`| Arbiter (Quorum=1) | Resolves active dispute when quorum is 1 | ~45,000 |
 
 ---
 
@@ -422,8 +429,8 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 MEDway includes two comprehensive test suites:
 
-### 1. Smart Contract Test Suite (`70/70 Passing`)
-Covers deployment, ownership, lifecycle transitions, authorization, expiry, dispute handling, gasless EIP-712 meta-transactions, and the on-chain Institutional Identity Registry:
+### 1. Smart Contract Test Suite (`95/95 Passing`)
+Covers deployment, ownership, lifecycle transitions, authorization, expiry, dispute handling, gasless EIP-712 meta-transactions, on-chain Institutional Identity Registry, adversarial security controls, and Consortium Arbitration Board governance:
 
 ```bash
 cd contracts
@@ -456,8 +463,9 @@ Running node:test tests
     EIP-712 Gasless Meta-Transactions (9 tests)
     Institutional Identity Registry - Feature 2 (14 tests)
     Feature 2: Adversarial Multi-Party Authorization & Security Checks (13 tests)
+    Consortium Arbitration Board - Governance Item D (6 tests)
 
-89 passing (3 solidity, 86 nodejs)
+95 passing (3 solidity, 92 nodejs)
 ```
 
 ---
@@ -629,10 +637,20 @@ Output:
 * Each signed authorization requires a Unix timestamp `deadline`.
 * If network congestion or delays exceed this threshold, the contract reverts with `SignatureExpired`, preventing stale authorizations from executing unexpectedly.
 
-### 5. Dispute Windows & Arbitration
+### 5. Consortium Arbitration Board & Dispute Windows
 * Once a reservation is fulfilled, a `DISPUTE_WINDOW` of **7 days** (604,800 seconds) is initiated.
 * If clinical quality or service delivery fails, either party can raise an on-chain dispute by submitting an immutable `evidenceHash`.
-* Designated consortium arbitrators adjudicate disputes on-chain via `resolveDispute()`.
+* **Consortium Arbitration Governance (Item D)**: Moves beyond single-owner centralized dispute resolution to a decentralized Consortium Arbitration Board.
+  * Supports appointing and removing consortium arbitrators via `addArbitrator()` and `removeArbitrator()`.
+  * Configurable voting quorum (`setArbitrationQuorum(quorum)`).
+  * Multi-arbitrator voting via `castArbitrationVote(reservationId, ruling, rulingEvidence)`.
+  * Automatic dispute resolution once the required quorum threshold is reached.
+  * 100% backwards-compatible direct resolution via `resolveDispute()` when quorum is 1.
+
+### 6. Anti-Reassignment & Resilient Commitment Lifecycle (Items A, B & C)
+* **Wallet Reassignment Inconsistency Prevention (Item A)**: `_authorizeWalletInternal()` strictly forbids active wallets from being reassigned to a different institution, and blocks revoked wallets from silent transfers, preserving immutable historical accountability.
+* **Decoupled Obligations & Wallet Rotation (Item B)**: Revoking a wallet prevents new reservations or acceptances, but does not invalidate pre-existing commitments. Replacement authorized wallets of the same institution can fulfill existing obligations, or execute formal on-chain key rotation via `rotateReservationWallet()`.
+* **Dynamic Role Updates (Item C)**: Contract owner can update accredited institutional capabilities (e.g. from `Requester` to `Both`) via `setInstitutionRole()` with comprehensive state validation and event emission.
 
 ---
 
@@ -646,7 +664,9 @@ Output:
 - [x] On-Chain Institutional Identity Registry with multi-wallet RBAC (Feature 2)
 - [x] Cryptographic Terms Immutability & Independent Zero-Backend Verifier Tool
 - [x] Tamper-Evident SHA-256 Hash-Chained Audit Trail & Off-Chain Evidence Vault
-- [x] 70-test automated Hardhat & Foundry test suite
+- [x] Consortium Arbitration Board with multi-arbitrator quorum voting & auto-finalization (Item D)
+- [x] Resilient key rotation, anti-reassignment guard & dynamic role updates (Items A, B, C)
+- [x] 95-test automated Hardhat & Foundry test suite (3 Solidity, 92 Node.js)
 - [x] 8-module end-to-end comprehensive system verification suite
 - [ ] Multi-party threshold signatures (ERC-7739 / Multisig coordination)
 - [ ] Zero-Knowledge Proofs (ZK-SNARKs) for anonymous institution credential attestation
