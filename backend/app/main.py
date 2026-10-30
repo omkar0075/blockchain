@@ -227,7 +227,19 @@ def authorize_proposal(
 
     commitment_id = str(uuid4())
     provider_id = proposal["selected_provider_id"]
-    resource_ref = f"medway-{proposal_id[:8]}"
+
+    # Compute deterministic canonical terms hash to guarantee terms immutability on-chain
+    terms_payload = {
+        "proposal_id": proposal_id,
+        "requester": requester_id,
+        "provider": provider_id,
+        "resource_type": proposal["request"]["resource_type"],
+        "quantity": proposal["selected_quantity"],
+        "urgency": proposal["request"].get("urgency", "urgent"),
+    }
+    canonical_terms_str = json.dumps(terms_payload, sort_keys=True)
+    terms_hash = "0x" + hashlib.sha256(canonical_terms_str.encode("utf-8")).hexdigest()
+    resource_ref = terms_hash
 
     # Attempt on-chain reservation proposal on Coral Testnet via the Viem bridge
     onchain_res = create_onchain_reservation(
@@ -243,6 +255,8 @@ def authorize_proposal(
         "provider_id": provider_id,
         "resource_type": proposal["request"]["resource_type"],
         "quantity": proposal["selected_quantity"],
+        "terms_hash": terms_hash,
+        "canonical_terms": terms_payload,
         "status": "authorized",
         "approved_by": approval.approved_by,
         "created_at": None,

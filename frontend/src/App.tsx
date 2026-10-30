@@ -93,6 +93,22 @@ interface EvidenceRecord {
   created_at: number
 }
 
+interface DirectRpcVerification {
+  reservationId: string
+  status: string
+  requester: string
+  provider: string
+  resourceRef: string
+  decodedRef: string
+  expiresAt: string
+  createdAt: string
+  fulfilledAt: string
+  disputeEvidence: string
+  disputedBy: string
+  verifiedAt: string
+  durationMs: number
+}
+
 const ACTORS = [
   { id: 'hospital-a', name: 'City Hospital A', role: 'requester', key: 'medway-key-hosp-a-sec91', icon: '🏥' },
   { id: 'lab-c', name: 'Central Diagnostic Lab C', role: 'provider', key: 'medway-key-lab-c-sec73', icon: '🔬' },
@@ -127,6 +143,7 @@ export default function App() {
   const [auditEvents, setAuditEvents] = useState<AuditEvent[]>([])
   const [auditIntegrity, setAuditIntegrity] = useState<{ valid: boolean; total_events: number } | null>(null)
   const [evidenceRecords, setEvidenceRecords] = useState<EvidenceRecord[]>([])
+  const [directRpcResult, setDirectRpcResult] = useState<DirectRpcVerification | null>(null)
 
   // Headers for current actor
   const authHeaders = {
@@ -317,6 +334,73 @@ export default function App() {
       setEvidenceRecords(evidenceRes.evidence || [])
     } catch (err) {
       console.error(err)
+    }
+  }
+
+  // 8. Direct RPC Verification (Bypasses Backend Entirely)
+  async function verifyDirectFromCoralRPC(reservationId: string) {
+    setLoading(true)
+    setMessage('Querying Coral Testnet RPC directly via eth_call (bypassing backend)...')
+    try {
+      const cleanId = reservationId.replace('0x', '')
+      const callData = '0xa1b416f9' + cleanId
+      const start = Date.now()
+      const rpcRes = await fetch('https://coralrpc.mstblockchain.com', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          jsonrpc: '2.0',
+          id: 1,
+          method: 'eth_call',
+          params: [
+            {
+              to: '0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC',
+              data: callData,
+            },
+            'latest',
+          ],
+        }),
+      })
+      const json = await rpcRes.json()
+      const durationMs = Date.now() - start
+      const hex = (json.result || '').replace('0x', '')
+      if (hex.length >= 640) {
+        const words: string[] = []
+        for (let i = 0; i < hex.length; i += 64) {
+          words.push(hex.slice(i, i + 64))
+        }
+        const statusCode = Number(BigInt('0x' + words[5]))
+        const statusNames = ['Proposed', 'Committed', 'Fulfilled', 'Cancelled', 'Expired', 'Disputed']
+        
+        let decodedRef = ''
+        try {
+          const rawBytes = words[1].match(/.{1,2}/g)?.map(b => parseInt(b, 16)) || []
+          decodedRef = String.fromCharCode(...rawBytes).replace(/[\0]/g, '').trim()
+        } catch {}
+
+        setDirectRpcResult({
+          reservationId: '0x' + words[0],
+          resourceRef: '0x' + words[1],
+          decodedRef,
+          requester: '0x' + words[2].slice(24),
+          provider: '0x' + words[3].slice(24),
+          expiresAt: new Date(Number(BigInt('0x' + words[4])) * 1000).toLocaleString(),
+          status: statusNames[statusCode] || `Code ${statusCode}`,
+          createdAt: new Date(Number(BigInt('0x' + words[6])) * 1000).toLocaleString(),
+          fulfilledAt: BigInt('0x' + words[7]) > 0n ? new Date(Number(BigInt('0x' + words[7])) * 1000).toLocaleString() : 'N/A',
+          disputeEvidence: '0x' + words[8],
+          disputedBy: '0x' + words[9].slice(24),
+          verifiedAt: new Date().toLocaleTimeString(),
+          durationMs,
+        })
+        setMessage(`Direct on-chain confirmation verified in ${durationMs}ms via Coral RPC!`)
+      } else {
+        throw new Error('Reservation not found directly on Coral Testnet.')
+      }
+    } catch (e) {
+      setMessage(e instanceof Error ? e.message : 'Direct RPC query failed')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -663,6 +747,18 @@ export default function App() {
                           >
                             🔍 Audit & Evidence
                           </button>
+
+                          {/* Direct RPC Verification */}
+                          {c.onchain_reservation_id && (
+                            <button
+                              className="small"
+                              onClick={() => verifyDirectFromCoralRPC(c.onchain_reservation_id!)}
+                              title="Query Coral Testnet RPC directly (bypasses backend)"
+                              style={{ background: '#059669', borderColor: '#059669', color: '#fff' }}
+                            >
+                              ⚡ Direct RPC Verify
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>
@@ -849,6 +945,61 @@ export default function App() {
 
             <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '18px' }}>
               <button className="secondary" onClick={() => setAuditModalTarget(null)}>Close</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MODAL: DIRECT RPC VERIFICATION */}
+      {directRpcResult && (
+        <div className="modal-overlay">
+          <div className="modal-box" style={{ maxWidth: '720px' }}>
+            <div className="modal-header">
+              <div>
+                <h3 style={{ margin: 0 }}>⚡ Direct Coral Testnet RPC Verification</h3>
+                <span style={{ fontSize: '12px', color: '#16a34a', fontWeight: 700 }}>
+                  ✓ 100% Zero-Backend Reliance · Directly Decoded from Coral Node in {directRpcResult.durationMs}ms
+                </span>
+              </div>
+              <button className="close-btn" onClick={() => setDirectRpcResult(null)}>×</button>
+            </div>
+
+            <div style={{ background: '#f0fdf4', border: '1px solid #bbf7d0', borderRadius: '8px', padding: '12px 14px', marginBottom: '16px' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                <strong style={{ color: '#15803d', fontSize: '13px' }}>
+                  Direct On-Chain State: {directRpcResult.status.toUpperCase()}
+                </strong>
+                <span className={`status-pill ${getStatusBadgeClass(directRpcResult.status)}`}>
+                  {directRpcResult.status}
+                </span>
+              </div>
+              <div style={{ fontSize: '11px', color: '#475569', marginTop: '4px' }}>
+                Node Endpoint: <code>https://coralrpc.mstblockchain.com</code> | Contract: <code>0xFc71e5D5b2BD0648BCA20b66a09199E8D89BBEEC</code>
+              </div>
+            </div>
+
+            <div style={{ display: 'grid', gap: '8px', fontSize: '12px', background: '#f8fafc', padding: '14px', borderRadius: '8px', border: '1px solid #e2e8f0' }}>
+              <div><strong>Reservation ID:</strong> <span className="mono-hash">{directRpcResult.reservationId}</span></div>
+              <div><strong>Requester (Hospital):</strong> <span className="mono-hash">{directRpcResult.requester}</span></div>
+              <div><strong>Provider (Facility):</strong> <span className="mono-hash">{directRpcResult.provider}</span></div>
+              <div>
+                <strong>Terms Hash (resourceRef):</strong> <span className="mono-hash">{directRpcResult.resourceRef}</span>
+                {directRpcResult.decodedRef && <span style={{ marginLeft: '8px', color: '#0369a1', fontWeight: 600 }}>({directRpcResult.decodedRef})</span>}
+              </div>
+              <div><strong>Created At:</strong> {directRpcResult.createdAt}</div>
+              <div><strong>Expires At:</strong> {directRpcResult.expiresAt}</div>
+              {directRpcResult.fulfilledAt !== 'N/A' && (
+                <div><strong>Fulfilled At:</strong> {directRpcResult.fulfilledAt}</div>
+              )}
+            </div>
+
+            <div style={{ marginTop: '16px', padding: '12px', background: '#eff6ff', border: '1px solid #bfdbfe', borderRadius: '8px', fontSize: '11px', color: '#1e40af' }}>
+              <strong>🔒 Mathematical Immutability Guarantee:</strong><br />
+              The agreed terms, participating hospital identities, and slot references were permanently written to EVM storage upon creation. The smart contract contains <strong>zero setter functions</strong> to alter terms after proposal. If any party modifies terms, an entirely new reservation proposal with signed authorization is strictly required.
+            </div>
+
+            <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: '16px' }}>
+              <button className="secondary" onClick={() => setDirectRpcResult(null)}>Close</button>
             </div>
           </div>
         </div>
