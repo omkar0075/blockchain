@@ -20,6 +20,12 @@ from .request_agent import (
 )
 from .verification_agent import VerificationAgent
 from .blockchain_agent import BlockchainExecutionAgent, DefaultBlockchainClient
+from .monitoring_agent import (
+    BlockchainEvent,
+    MonitoredEntity,
+    MonitoringAgent,
+    ReservationLifecycleState,
+)
 from .orchestrator import (
     WorkflowOrchestrator,
     WorkflowRecord,
@@ -141,6 +147,10 @@ __all__ = [
     "RequestAgent",
     "VerificationAgent",
     "BlockchainExecutionAgent",
+    "MonitoringAgent",
+    "BlockchainEvent",
+    "MonitoredEntity",
+    "ReservationLifecycleState",
     "WorkflowOrchestrator",
     "WorkflowRecord",
     "WorkflowState",
