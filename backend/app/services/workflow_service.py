@@ -358,16 +358,33 @@ class WorkflowService:
             else:
                 wf.monitoring_status = "PENDING"
 
-        # 2. Query lock status if reader supports get_capacity_lock
-        if lock_id and hasattr(blockchain_reader, "get_capacity_lock"):
-            lock_info = blockchain_reader.get_capacity_lock(lock_id)
+        # 2. Query lock status if reader supports get_capacity_lock or get_lock
+        if lock_id:
+            lock_info = None
+            if hasattr(blockchain_reader, "get_lock"):
+                lock_info = blockchain_reader.get_lock(lock_id)
+            elif hasattr(blockchain_reader, "get_capacity_lock"):
+                lock_info = blockchain_reader.get_capacity_lock(lock_id)
+
             if lock_info:
-                if lock_info.get("released"):
+                st = str(lock_info.get("status", "")).upper()
+                if lock_info.get("released") or st in ("RELEASED", "CANCELLED"):
                     wf.state = "CANCELLED"
                     wf.monitoring_status = "RELEASED"
-                elif lock_info.get("is_expired"):
+                elif lock_info.get("is_expired") or st == "EXPIRED":
                     wf.state = "EXPIRED"
-                    wf.monitoring_status = "EXPIRED"
+                    wf.monitoring_status = "Expired"
+
+        # 3. Query reservation status if reader supports get_reservation
+        if reservation_id and hasattr(blockchain_reader, "get_reservation"):
+            res_info = blockchain_reader.get_reservation(reservation_id)
+            if res_info:
+                st = str(res_info.get("status", "")).upper()
+                if st in ("COMMITTED", "CONFIRMED"):
+                    wf.is_committed = True
+                    wf.monitoring_status = "Committed"
+                elif st in ("FULFILLED", "COMPLETED"):
+                    wf.monitoring_status = "Fulfilled"
 
         now = datetime.now(timezone.utc)
         wf.updated_at = now

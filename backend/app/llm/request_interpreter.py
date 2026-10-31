@@ -267,4 +267,6 @@ class LLMRequestParser(BaseRequestParser):
             "missing_fields": unique_missing,
             "requester_institution_id": requester_institution_id,
             "clarification_prompt": interpretation.clarification_prompt,
+            "interpretation": interpretation.model_dump(),
+            "is_llm_interpreted": True,
         }

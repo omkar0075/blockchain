@@ -1,3 +1,4 @@
+from .agent_llm_bridge import AIRecommendation, AgentLLMBridge
 from .agent_observability import (
     AgentObservabilityService,
     ObservabilityEvent,
@@ -20,5 +21,7 @@ __all__ = [
     "WorkflowStateError",
     "WorkflowStorageError",
     "WorkflowService",
+    "AgentLLMBridge",
+    "AIRecommendation",
 ]
 

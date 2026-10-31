@@ -110,11 +110,13 @@ class MonitoringAgent(BaseAgent):
         reader: Optional[Any] = None,
         deadline_warning_seconds: int = 1800,  # 30 minutes
         confirmation_timeout_seconds: int = 120,  # 2 minutes
+        required_confirmations: int = 1,
     ) -> None:
         super().__init__(name=name)
         self.reader = reader or DefaultBlockchainReader()
         self.deadline_warning_seconds = deadline_warning_seconds
         self.confirmation_timeout_seconds = confirmation_timeout_seconds
+        self.required_confirmations = required_confirmations
 
         # In-memory tracking structures
         self._processed_event_keys: set[str] = set()
@@ -176,6 +178,18 @@ class MonitoringAgent(BaseAgent):
 
         if not res or not res.get("success"):
             err = res.get("error", "Unknown receipt error") if isinstance(res, dict) else "No response from RPC"
+            if isinstance(res, dict) and res.get("status") == "replaced":
+                replacement_hash = res.get("replacement_tx_hash")
+                return {
+                    "success": False,
+                    "status": "REPLACED",
+                    "tx_hash": tx_hash,
+                    "replacement_tx_hash": replacement_hash,
+                    "workflow_id": str(workflow_id),
+                    "confirmed": False,
+                    "error": err,
+                    "message": f"Transaction {tx_hash} replaced by {replacement_hash}",
+                }
 
             # Check for delayed confirmation
             is_delayed = False
@@ -221,6 +235,18 @@ class MonitoringAgent(BaseAgent):
                 "block_number": block_number,
                 "error": res.get("revertReason") or res.get("error") or "Transaction reverted on-chain",
                 "message": f"Transaction {tx_hash} reverted in block {block_number}",
+            }
+        confirmations = res.get("confirmations", 1)
+        if hasattr(self, "required_confirmations") and confirmations < self.required_confirmations:
+            return {
+                "success": False,
+                "status": "AWAITING_CONFIRMATIONS",
+                "tx_hash": tx_hash,
+                "workflow_id": str(workflow_id),
+                "confirmed": False,
+                "confirmations": confirmations,
+                "required_confirmations": self.required_confirmations,
+                "message": f"Transaction {tx_hash} has {confirmations}/{self.required_confirmations} required confirmations",
             }
 
         return {
