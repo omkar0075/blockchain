@@ -5,6 +5,8 @@ from fastapi import Depends, FastAPI, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from typing import Optional
 
+from contextlib import asynccontextmanager
+
 from .agents import discover_and_verify, choose_offer
 from .auth import (
     ActorIdentity,
@@ -44,6 +46,10 @@ from .db import (
     record_audit_event,
     get_audit_trail,
     verify_audit_trail_integrity,
+    init_pool,
+    close_pool,
+    init_db,
+    get_active_backend,
 )
 from .models import (
     ResourceRequest,
@@ -55,11 +61,26 @@ from .models import (
     CapacityLockReleaseRequest,
 )
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Initialize connection pool and verify schema during startup
+    init_pool()
+    init_db()
+    try:
+        yield
+    finally:
+        # Gracefully drain and close connection pool on shutdown
+        close_pool()
+
+
 app = FastAPI(
     title="MEDway API",
     description="Autonomous healthcare resource coordination with Coral Testnet on-chain verification and tamper-evident audit trails.",
     version="0.5.0",
+    lifespan=lifespan,
 )
+
 
 app.add_middleware(
     CORSMiddleware,
@@ -125,10 +146,12 @@ def health():
     if contract_owner:
         sync_arbitrator_with_contract_owner(contract_owner)
 
+    db_engine = get_active_backend()
     return {
         "status": "ok",
         "mode": "hybrid-autonomous-coordination",
-        "database": "sqlite-persistent",
+        "database": f"{db_engine}-persistent",
+        "database_backend": db_engine,
         "blockchain": {
             "status": "connected" if bc_connected else "disconnected",
             "network": bc.get("network", "Coral Testnet"),
