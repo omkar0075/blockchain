@@ -163,51 +163,116 @@ flowchart TB
 
 ## 🤖 Autonomous Multi-Agent System
 
-MEDway coordinates healthcare capacity using **nine specialized, deterministic software agents** operating inside a formal finite state machine (`ReservationWorkflowCoordinator`):
+MEDway coordinates healthcare capacity using **nine specialized, deterministic software agents** operating inside a formal finite state machine (`ReservationWorkflowCoordinator`). The multi-agent architecture decouples clinical demand, provider inventory, counter-offer convergence, cryptographic verification, and failure recovery into discrete, verifiable agent boundaries.
 
+### 📐 Detailed Multi-Agent Architectural Diagram
+
+```mermaid
+flowchart TD
+    subgraph INTAKE["1. Clinical Demand & Intake Tier"]
+        USER["Clinical Coordinator / EHR Webhook"] -->|"Raw Text or FHIR Payload"| REQ_AGENT["RequestAgent<br/>• Normalizes Demand<br/>• Enforces Urgency Limits<br/>• Validates Resource Types"]
+        LLM_INTERP["Request Interpreter (LLM)<br/>• Extracts Slot & Timing<br/>• Flags Ambiguity / Missing Info"] <-->|"Advisory Parsing"| REQ_AGENT
+        SCRUBBER["PII Sanitizer & Guardrails<br/>• Zero-PHI Invariant"] --- REQ_AGENT
+    end
+
+    subgraph DISCOVERY_OFFER["2. Regional Discovery & Capacity Evaluation Tier"]
+        REQ_AGENT -->|"ResourceRequest (Normalized)"| DISC_AGENT["DiscoveryAgent<br/>• Queries Accredited Registry<br/>• Filters Operating Windows<br/>• Geospatial & Capability Match"]
+        DISC_AGENT -->|"Capability Request"| PROV_AGENT["ProviderAgent<br/>• Queries Hospital/Lab Schedules<br/>• Assesses Idle Resources<br/>• Generates Provisional Offers"]
+        INST_REG[("Accredited Institution Registry<br/>(On-Chain / Local Cache)")] -.->|"Accredited Roles"| DISC_AGENT
+    end
+
+    subgraph NEGOTIATION_VERIFICATION["3. Negotiation Convergence & Verification Tier"]
+        PROV_AGENT -->|"Multiple ProviderOffers"| NEG_AGENT["NegotiationAgent<br/>• Multi-Offer Trade-off Analysis<br/>• Formulates Counter-Offers<br/>• Partial Split Allocation"]
+        LLM_NEGOT["Negotiation Advisor (LLM)<br/>• Utility Scoring & Ranking<br/>• Trade-off Explanations"] <-->|"Advisory Strategies"| NEG_AGENT
+        NEG_AGENT -->|"Ranked AllocationProposal"| VERIF_AGENT["VerificationAgent<br/>• 6-Point Pre-Flight Audit<br/>• Terms Immutability Hash Check<br/>• On-Chain Accreditation Lookup"]
+    end
+
+    subgraph HUMAN_GATE["4. Institutional Governance Gate"]
+        VERIF_AGENT -->|"VerificationResult (PASSED)"| COORD_SIGN["Human Institutional Sign-Off<br/>Hospital Coordinator Authorization<br/>(Cryptographic Approval Gate)"]
+        VERIF_AGENT -.->|"Verification FAILED"| REC_AGENT
+    end
+
+    subgraph EXECUTION_MONITORING["5. Settlement, Relaying & Monitoring Tier"]
+        COORD_SIGN -->|"Authorized Proposal"| EXEC_AGENT["BlockchainExecutionAgent<br/>• Generates EIP-712 Digest<br/>• Requests Off-Chain Signer Sig<br/>• Dispatches to Viem Relayer Bridge"]
+        EXEC_AGENT -->|"Signed Payload + Tx Hash"| MON_AGENT["MonitoringAgent<br/>• Tracks Mempool Latency<br/>• Detects Tx Speedups & Reorgs<br/>• Enforces Confirmation Depth"]
+        VIEM_BRIDGE["Viem Subprocess Bridge<br/>• Gas Sponsorship (0 Institutional MST)<br/>• Relayer Keystore (0x5E5B...)"] <--> EXEC_AGENT
+        VIEM_BRIDGE -->|"Broadcasts Transaction"| CORAL_CHAIN[("MST Coral Testnet (54635)<br/>MEDwayReservation.sol<br/>• 2PC Capacity Lock<br/>• Terms Hash Anchor")]
+        CORAL_CHAIN -.->|"Receipts & Event Logs"| MON_AGENT
+    end
+
+    subgraph RECOVERY_CIRCUIT["6. Autonomous Incident Recovery Tier"]
+        MON_AGENT -.->|"Tx Revert / Mempool Drop"| REC_AGENT["RecoveryAgent<br/>• Classifies Failure Root Cause<br/>• Generates Recovery Action Plan"]
+        LLM_RECOV["Recovery Advisor (LLM)<br/>• Failure Diagnosis<br/>• Strategy Recommendation"] <-->|"Advisory Root Cause"| REC_AGENT
+        REC_AGENT -->|"Action: RETRY_DIFFERENT_PROVIDER"| DISC_AGENT
+        REC_AGENT -->|"Action: RENEGOTIATE_PARTIAL"| NEG_AGENT
+        REC_AGENT -->|"Action: HUMAN_ESCALATION"| COORD_SIGN
+    end
+
+    subgraph STATE_OBSERVABILITY["Cross-Cutting Coordination & Telemetry Infrastructure"]
+        STATE_ENGINE[("Persistent State Engine (workflow_service.py)<br/>• Append-Only State Transitions<br/>• Idempotent Recovery on Restart<br/>• PostgreSQL / SQLite Hash-Chain")]
+        OBS_BUS[("Observability Telemetry Bus (agent_observability.py)<br/>• Event Tracing (START, COMPLETE, DECISION)<br/>• Correlation IDs across Agents<br/>• Redacted Audit Ledger")]
+    end
+
+    REQ_AGENT & DISC_AGENT & PROV_AGENT & NEG_AGENT & VERIF_AGENT & EXEC_AGENT & MON_AGENT & REC_AGENT --- STATE_ENGINE
+    REQ_AGENT & DISC_AGENT & PROV_AGENT & NEG_AGENT & VERIF_AGENT & EXEC_AGENT & MON_AGENT & REC_AGENT --- OBS_BUS
 ```
-                                  [ Incoming Request ]
-                                           │
-                                           ▼
-                                  ┌─────────────────┐
-                                  │  RequestAgent   │
-                                  └────────┬────────┘
-                                           │
-                                           ▼
-                                  ┌─────────────────┐
-                                  │ DiscoveryAgent  │
-                                  └────────┬────────┘
-                                           │
-                                           ▼
-                                  ┌─────────────────┐
-                                  │  ProviderAgent  │
-                                  └────────┬────────┘
-                                           │
-                                           ▼
-                                  ┌─────────────────┐
-                             ┌───►│NegotiationAgent ├────┐
-                             │    └────────┬────────┘    │ Counter-Offer /
-                             │             │             │ Partial Split
-                             │             ▼             │
-                             │    ┌─────────────────┐    │
-                             │    │VerificationAgent│◄───┘
-                             │    └────────┬────────┘
-                             │             │
-                             │             ▼
-                             │    ┌─────────────────┐
-                             │    │BlockchainAgent  │
-                             │    └────────┬────────┘
-                             │             │
-                             │             ▼
-                             │    ┌─────────────────┐
-                 Retry /     │    │ MonitoringAgent │
-               Alternative   │    └────────┬────────┘
-                Provider     │             │ Success / Failure
-                             │             ▼
-                             │    ┌─────────────────┐
-                             └────┤  RecoveryAgent  │
-                                  └─────────────────┘
+
+### 🔄 Multi-Agent State Machine Transition Lifecycle
+
+The `ReservationWorkflowCoordinator` orchestrates the deterministic progression through the lifecycle states:
+
+```mermaid
+stateDiagram-v2
+    [*] --> DRAFT: Intake Raw Request
+    DRAFT --> PARSED: RequestAgent (Validated ResourceRequest)
+    
+    PARSED --> DISCOVERY: DiscoveryAgent (Locate Regional Providers)
+    DISCOVERY --> OFFERS_GATHERED: ProviderAgent (Collect Provisional Offers)
+    
+    OFFERS_GATHERED --> NEGOTIATING: NegotiationAgent (Score Offers & Counter-Offers)
+    NEGOTIATING --> PROPOSAL_READY: AllocationProposal Formed
+    
+    PROPOSAL_READY --> VERIFYING: VerificationAgent (6-Point Pre-Flight Check)
+    VERIFYING --> HUMAN_APPROVAL_PENDING: Verification Passed
+    VERIFYING --> RECOVERING: Verification Failed
+    
+    HUMAN_APPROVAL_PENDING --> AUTHORIZED: Coordinator Signs Off
+    HUMAN_APPROVAL_PENDING --> REJECTED: Coordinator Declines
+    
+    AUTHORIZED --> EXECUTING_ONCHAIN: BlockchainExecutionAgent (EIP-712 Signing)
+    EXECUTING_ONCHAIN --> TRANSACTION_PENDING: Viem Bridge Relays to Coral Testnet
+    
+    TRANSACTION_PENDING --> MONITORING: MonitoringAgent (Watch Mempool & Confirmations)
+    MONITORING --> COMMITTED: Required Block Confirmations Reached
+    MONITORING --> RECOVERING: Transaction Dropped / Reverted / Timeout
+    
+    RECOVERING --> DISCOVERY: RecoveryAgent (Alternative Provider Route)
+    RECOVERING --> NEGOTIATING: RecoveryAgent (Renegotiate Terms)
+    RECOVERING --> ESCALATED: RecoveryAgent (Human Arbitration Required)
+    
+    COMMITTED --> FULFILLED: Provider Attests Delivery
+    FULFILLED --> DISPUTED: Dispute Opened (Within 7 Days)
+    FULFILLED --> SETTLED: 7-Day Window Expires Safely
+    
+    DISPUTED --> SETTLED: Consortium Arbitration Ruling
+    REJECTED --> [*]
+    SETTLED --> [*]
+    ESCALATED --> [*]
 ```
+
+### 📋 Inter-Agent Artifact & Data Contract Matrix
+
+| Step | Sending Agent | Receiving Agent | Passed Data Artifact | Invariant & Cryptographic Guarantees |
+| :-: | :--- | :--- | :--- | :--- |
+| **1** | `RequestAgent` | `DiscoveryAgent` | `ResourceRequest` | Zero patient names or PHI. Canonical resource type, quantity, urgency, and deadline. |
+| **2** | `DiscoveryAgent` | `ProviderAgent` | `DiscoveryQuery` | Only routes to active, accredited healthcare facilities verified in the Identity Registry. |
+| **3** | `ProviderAgent` | `NegotiationAgent` | `List[ProviderOffer]` | Provisional offers contain binding pricing, slot times, and safe capacity ceilings. |
+| **4** | `NegotiationAgent` | `VerificationAgent` | `AllocationProposal` | Resolves multi-offer trade-offs; enforces requester budget and minimum quantity thresholds. |
+| **5** | `VerificationAgent` | `Human Gate / Coordinator`| `VerificationResult` | 6-point pre-flight validation: active accreditation, terms hash match, expiry validity. |
+| **6** | `Coordinator Gate` | `BlockchainExecutionAgent`| `AuthorizedProposal` | Explicit institutional human signature triggers off-chain EIP-712 typed data hashing. |
+| **7** | `BlockchainAgent` | `MonitoringAgent` | `RelayerSubmission` | Signed EIP-712 payload submitted via Viem bridge; returns on-chain transaction hash. |
+| **8** | `MonitoringAgent` | `Workflow Coordinator` | `TransactionReceipt` | Finalized block height, confirmation count, gas utilized, and event log emissions. |
+| **9** | `Monitoring / Verif` | `RecoveryAgent` | `FailureContext` | Error classification, timeout context, and failure payload passed for remediation. |
 
 ### Detailed Agent Roles & Specifications
 
