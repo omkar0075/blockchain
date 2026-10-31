@@ -1,0 +1,31 @@
+{
+  "name": "medway-monorepo",
+  "version": "2.5.0",
+  "description": "Autonomous Healthcare Resource Coordination Platform with Controlled LLM Reasoning and EIP-712 Gasless On-Chain Commitments on MST Coral Testnet",
+  "private": true,
+  "scripts": {
+    "install:all": "npm --prefix contracts install && npm --prefix backend install && npm --prefix frontend install",
+    "test": "npm run test:contracts && npm run test:backend",
+    "test:contracts": "npm --prefix contracts test",
+    "test:backend": "cd backend && pytest -v -k \"not test_api\"",
+    "test:system": "python backend/test-system-verification.py",
+    "dev:backend": "cd backend && uvicorn app.main:app --reload --port 8000",
+    "dev:frontend": "npm --prefix frontend run dev",
+    "build:frontend": "npm --prefix frontend run build",
+    "docker:up": "docker compose up --build -d",
+    "docker:down": "docker compose down"
+  },
+  "keywords": [
+    "healthcare",
+    "blockchain",
+    "mst-coral",
+    "eip-712",
+    "meta-transactions",
+    "autonomous-agents",
+    "llm",
+    "zero-pii",
+    "hipaa"
+  ],
+  "author": "MEDway Team",
+  "license": "MIT"
+}

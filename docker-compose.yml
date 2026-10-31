@@ -1,4 +1,9 @@
+version: '3.8'
+
 services:
+  # ----------------------------------------------------------------------------
+  # 1. PostgreSQL Database Service
+  # ----------------------------------------------------------------------------
   postgres:
     image: postgres:16-alpine
     container_name: medway-postgres
@@ -16,7 +21,68 @@ services:
       interval: 5s
       timeout: 5s
       retries: 5
+    networks:
+      - medway-network
+
+  # ----------------------------------------------------------------------------
+  # 2. FastAPI Backend & Autonomous Multi-Agent Service (with Viem Bridge)
+  # ----------------------------------------------------------------------------
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: medway-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER:-medway}:${POSTGRES_PASSWORD:-medway_secure_pass}@postgres:5432/${POSTGRES_DB:-medway_db}
+      CORAL_RPC_URL: ${CORAL_RPC_URL:-https://coralrpc.mstblockchain.com}
+      CHAIN_ID: ${CHAIN_ID:-54635}
+      CONTRACT_ADDRESS: ${CONTRACT_ADDRESS:-0xcd630b8e555e0751afbb9ae511869110d361bb83}
+      MEDWAY_CONTRACT_ADDRESS: ${MEDWAY_CONTRACT_ADDRESS:-0xcd630b8e555e0751afbb9ae511869110d361bb83}
+      CORAL_PRIVATE_KEY: ${CORAL_PRIVATE_KEY:-}
+      HOSPITAL_A_PRIVATE_KEY: ${HOSPITAL_A_PRIVATE_KEY:-0xdb005ea813f1e7bc63ba1c81cc33b9820502b6a40abfa065b8330fc08f5a607b}
+      HOSPITAL_A_ADDRESS: ${HOSPITAL_A_ADDRESS:-0x4dB8336edB0af7FeD1311312081689993F80a18B}
+      LAB_C_PRIVATE_KEY: ${LAB_C_PRIVATE_KEY:-0x857d17464bde4ab400af5f87be5a92388514649da5d39bc6df9d68c85ae71b8c}
+      LAB_C_ADDRESS: ${LAB_C_ADDRESS:-0xb05049cc2A5a1c28979DEafc82B82749681DA92C}
+    ports:
+      - "${BACKEND_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - medway-network
+
+  # ----------------------------------------------------------------------------
+  # 3. React 18 Coordinator Dashboard (Nginx High-Performance Reverse Proxy)
+  # ----------------------------------------------------------------------------
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: medway-frontend
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${FRONTEND_PORT:-3000}:80"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost/"]
+      interval: 15s
+      timeout: 3s
+      retries: 3
+    networks:
+      - medway-network
 
 volumes:
   postgres_data:
     driver: local
+
+networks:
+  medway-network:
+    driver: bridge

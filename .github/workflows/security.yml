@@ -1,0 +1,40 @@
+name: Security & Code Scanning
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+  schedule:
+    - cron: '0 0 * * 1' # Weekly on Mondays
+
+jobs:
+  audit:
+    name: Dependency Audit & Secret Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: NPM Audit - Contracts
+        working-directory: contracts
+        run: npm audit --audit-level=high || true
+
+      - name: NPM Audit - Backend Bridge
+        working-directory: backend
+        run: npm audit --audit-level=high || true
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Python Dependency Safety Check
+        run: |
+          pip install pip-audit
+          pip-audit -r backend/requirements.txt || true

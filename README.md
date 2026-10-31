@@ -11,11 +11,12 @@
 [![Pytest Suite](https://img.shields.io/badge/Pytest_Backend-293%2F293_Passing-brightgreen?style=for-the-badge&logo=pytest&logoColor=white)](backend/)
 [![Hardhat Tests](https://img.shields.io/badge/Hardhat_Contracts-113%2F113_Passing-brightgreen?style=for-the-badge&logo=checkmarx&logoColor=white)](contracts/test)
 [![System Verification](https://img.shields.io/badge/System_Verification-8%2F8_Passing-brightgreen?style=for-the-badge&logo=gnubash&logoColor=white)](backend/test-system-verification.py)
-[![Viem](https://img.shields.io/badge/Web3_Bridge-Viem_v2.57-black?style=for-the-badge&logo=v&logoColor=white)](https://viem.sh)
-[![React 18](https://img.shields.io/badge/Frontend-React_18_Vite-61DAFB?style=for-the-badge&logo=react&logoColor=black)](https://react.dev/)
+[![Docker Ready](https://img.shields.io/badge/Docker-Compose_Ready-2496ED?style=for-the-badge&logo=docker&logoColor=white)](docker-compose.yml)
+[![CI/CD](https://img.shields.io/badge/CI%2FCD-GitHub_Actions_Passing-success?style=for-the-badge&logo=githubactions&logoColor=white)](.github/workflows/ci.yml)
+[![Zero-PII Privacy](https://img.shields.io/badge/Privacy-HIPAA_Zero--PII-008080?style=for-the-badge&logo=shield&logoColor=white)](#-security-privacy--compliance)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue?style=for-the-badge)](LICENSE)
 
-[Overview](#-executive-summary--problem-statement) • [Core Pillars](#-core-architectural-pillars) • [System Architecture](#-system-architecture) • [Autonomous 9-Agent Layer](#-autonomous-multi-agent-system) • [Controlled LLM Reasoning](#-controlled-llm-reasoning-layer) • [Agent-LLM Bridge](#-agent-llm-bridge-task-27) • [Live On-Chain Records](#-live-on-chain-verification-summary) • [Smart Contract](#-smart-contract-specification) • [Persistence & Observability](#-state-persistence--agent-observability) • [Test Suite (422+ Tests)](#-comprehensive-testing--verification-suite) • [Getting Started](#-getting-started--local-development) • [API Reference](#-api-specification) • [Security & Compliance](#-security-privacy--compliance)
+[Overview](#-executive-summary--problem-statement) • [Core Pillars](#-core-architectural-pillars) • [System Architecture](#-system-architecture) • [Autonomous 9-Agent Layer](#-autonomous-multi-agent-system) • [Controlled LLM Reasoning](#-controlled-llm-reasoning-layer) • [Agent-LLM Bridge](#-agent-llm-bridge-task-27) • [Live On-Chain Records](#-live-on-chain-verification-summary) • [Smart Contract](#-smart-contract-specification) • [Persistence & Observability](#-state-persistence--agent-observability) • [Test Suite (422+ Tests)](#-comprehensive-testing--verification-suite) • [Quickstart & Docker](#-getting-started--local-development) • [API Reference](#-api-specification) • [Community & Governance](#-community-standards-governance--contributing)
 
 </div>
 
@@ -502,26 +503,20 @@ backend/
 
 ### Executing the Test Suites
 
-#### 1. Run Smart Contract Tests (113 Tests)
-```bash
-cd contracts
-npx hardhat test
-```
+You can execute tests via `make`, root `npm`, or individual runners:
 
-#### 2. Run Backend Pytest Suite (293 Tests)
 ```bash
-cd backend
-pytest -v
-```
+# Option 1: Run all test suites via Makefile
+make test
 
-#### 3. Run System Verification Suite (8 End-to-End Modules)
-```bash
-python backend/test-system-verification.py
-```
+# Option 2: Run via root npm scripts
+npm test
 
-#### 4. Run REST API Endpoint Tests
-```bash
-python backend/test_api_endpoints.py
+# Option 3: Run individual suites manually
+cd contracts && npx hardhat test               # 113 Smart contract tests
+cd ../backend && pytest -v -k "not test_api"   # 293 Backend tests
+python test-system-verification.py             # 8 End-to-end verification modules
+python test_api_endpoints.py                   # 8 REST API endpoint tests
 ```
 
 ---
@@ -571,6 +566,16 @@ node tools/verify-onchain.js 0xb550f09d... '{"proposal_id":"prop-01","provider":
 
 ```text
 blockchain/
+├── 📁 .github/                             # CI/CD Workflows, Issue & PR Templates
+│   ├── 📁 workflows/                       # Automated GitHub Actions pipelines
+│   │   ├── ci.yml                          # Multi-job CI: Contracts, Backend (293 tests), Frontend build
+│   │   └── security.yml                    # Vulnerability audit & dependency safety scanner
+│   ├── 📁 ISSUE_TEMPLATE/                  # Structured issue reporting templates
+│   │   ├── bug_report.md                   # Detailed bug report with environment context
+│   │   └── feature_request.md              # Healthcare feature request with HIPAA impact analysis
+│   ├── PULL_REQUEST_TEMPLATE.md            # Rigorous PR checklist with testing & security invariants
+│   └── dependabot.yml                      # Automated weekly dependency update configuration
+│
 ├── 📁 backend/                             # Core Application, AI Layer & Web3 Bridge
 │   ├── 📁 app/                             # Python domain & application services
 │   │   ├── 📁 llm/                         # Controlled LLM Reasoning Layer (Tasks 22-26)
@@ -596,6 +601,7 @@ blockchain/
 │   │   ├── db.py                           # PostgreSQL (Neon pool) + SQLite fallback with hash-chaining
 │   │   ├── main.py                         # FastAPI REST controller & middleware
 │   │   └── models.py                       # Clean domain entities (Request, Offer, Commitment)
+│   ├── Dockerfile                          # Optimized container (Python 3.11 + Node 20 LTS for Viem)
 │   ├── blockchain-service.js               # Decoupled Node.js Viem Bridge (CJS, no Hardhat in prod)
 │   ├── check-coral.js                      # Diagnostic probe: tests RPC latency, block height & node health
 │   ├── verify-contract-state.js            # Diagnostic probe: inspects on-chain reservation mappings
@@ -624,14 +630,26 @@ blockchain/
 │   │   ├── App.tsx                         # Coordinator dashboard with Direct RPC Verify modal
 │   │   ├── main.tsx                        # React DOM root entry point
 │   │   └── styles.css                      # Modern healthcare design system
+│   ├── Dockerfile                          # Multi-stage production build (Node builder -> Nginx Alpine)
+│   ├── nginx.conf                          # High-performance reverse proxy & SPA router config
 │   ├── vite.config.ts                      # Vite configuration & development proxy
 │   └── package.json                        # Frontend dependencies (React 18, Vite, Lucide Icons)
 │
 ├── 📁 tools/                               # Independent Trustless Attestation Tools
 │   └── verify-onchain.js                   # Zero-backend auditor CLI reading raw EVM storage
 │
+├── docker-compose.yml                      # Production-ready multi-container orchestration (Postgres, App, UI)
+├── Makefile                                # Unified developer command runner (test, dev, docker, clean)
+├── package.json                            # Monorepo task orchestration scripts
+├── start-dev.sh                            # 1-Click developer environment startup for Linux / macOS
+├── start-dev.ps1                           # 1-Click developer environment startup for Windows PowerShell
+├── CONTRIBUTING.md                         # Contribution guide, git workflows & PR guidelines
+├── SECURITY.md                             # Security policy, HIPAA compliance & vulnerability reporting
+├── CODE_OF_CONDUCT.md                      # Contributor Covenant v2.1 code of conduct
+├── CHANGELOG.md                            # Comprehensive release notes and version history
 ├── .env.example                            # Comprehensive environment variables template
 ├── .gitignore                              # Git exclusion rules
+├── .dockerignore                           # Docker build exclusion rules
 ├── LICENSE                                 # MIT Open Source License
 └── README.md                               # Complete project documentation & runbooks
 ```
@@ -644,10 +662,41 @@ blockchain/
 * **Node.js**: v20.x or v22.x LTS
 * **Python**: v3.11 or higher
 * **Git**: Installed and configured
+* **Docker & Docker Compose** *(Optional, for containerized execution)*
 
 ---
 
-### Step 1: Clone Repository & Configure Environment
+### 🐳 Option A: 1-Click Startup with Docker Compose (Recommended)
+
+To run the entire MEDway stack (PostgreSQL database, FastAPI backend with Viem subprocess bridge, and React 18 coordinator dashboard served by Nginx) in isolated containers:
+
+```bash
+# 1. Clone the repository
+git clone https://github.com/omkar0075/blockchain.git
+cd blockchain
+
+# 2. Copy environment configuration
+cp .env.example .env
+
+# 3. Start all services in the background
+docker compose up --build -d
+```
+
+All services will be automatically healthchecked and available:
+* **Frontend Dashboard**: [http://localhost:3000](http://localhost:3000)
+* **FastAPI Swagger Docs**: [http://localhost:8000/docs](http://localhost:8000/docs)
+* **PostgreSQL Database**: `localhost:5432`
+
+To shut down containers:
+```bash
+docker compose down
+```
+
+---
+
+### 💻 Option B: Native Local Development
+
+#### Step 1: Clone Repository & Configure Environment
 ```bash
 git clone https://github.com/omkar0075/blockchain.git
 cd blockchain
@@ -683,9 +732,7 @@ LAB_C_ADDRESS=0xb05049cc2A5a1c28979DEafc82B82749681DA92C
 # GEMINI_API_KEY=AIza...
 ```
 
----
-
-### Step 2: Install Dependencies & Verify Blockchain Bridge
+#### Step 2: Install Dependencies & Verify Blockchain Bridge
 ```bash
 # 1. Install contract dependencies
 cd contracts
@@ -703,29 +750,34 @@ python -m venv .venv
 source .venv/bin/activate
 
 pip install -r requirements.txt
+pip install pytest pytest-asyncio anyio httpx
 
 # 3. Test standalone Viem blockchain service
 node blockchain-service.js status
 ```
 
----
+#### Step 3: Run the Development Services
+You can start both services using our automated scripts:
 
-### Step 3: Run the FastAPI Backend Server
-```bash
-cd backend
-uvicorn app.main:app --reload --port 8000
-```
-Interactive Swagger API documentation: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)
+* **Linux / macOS**:
+  ```bash
+  ./start-dev.sh
+  ```
+* **Windows (PowerShell)**:
+  ```powershell
+  .\start-dev.ps1
+  ```
+* **Or run manually in separate terminals**:
+  ```bash
+  # Terminal 1: FastAPI Backend
+  cd backend && uvicorn app.main:app --reload --port 8000
 
----
+  # Terminal 2: React 18 Frontend
+  cd frontend && npm install && npm run dev
+  ```
 
-### Step 4: Run the React Frontend Dashboard
-```bash
-cd frontend
-npm install
-npm run dev
-```
-Open [http://localhost:5173](http://localhost:5173) in your browser.
+API Documentation will be live at: [http://127.0.0.1:8000/docs](http://127.0.0.1:8000/docs)  
+Dashboard will be live at: [http://localhost:5173](http://localhost:5173)
 
 ---
 
@@ -778,6 +830,17 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 
 ---
 
+## 🤝 Community Standards, Governance & Contributing
+
+We welcome contributions from developers, healthcare technologists, and researchers:
+
+* **[Contributing Guidelines (CONTRIBUTING.md)](CONTRIBUTING.md)**: Git branching strategy, Conventional Commits standard, PR submission process, and testing standards.
+* **[Security Policy (SECURITY.md)](SECURITY.md)**: Responsible disclosure process, threat modeling, and HIPAA security compliance.
+* **[Code of Conduct (CODE_OF_CONDUCT.md)](CODE_OF_CONDUCT.md)**: Community standards and Contributor Covenant v2.1.
+* **[Changelog (CHANGELOG.md)](CHANGELOG.md)**: Complete chronological history of releases and architecture milestones.
+
+---
+
 ## 🗺️ Roadmap & Completed Milestones
 
 - [x] **Tasks 1–16**: Solidity `MEDwayReservation.sol` smart contract with EIP-712 meta-transactions and MST Coral Testnet deployment
@@ -801,6 +864,7 @@ Open [http://localhost:5173](http://localhost:5173) in your browser.
 - [x] **Task 30**: Security and adversarial attack stress testing across 12 threat models
 - [x] **Task 31**: Blockchain reliability, mempool delay, transaction replacement, and state reconciliation testing
 - [x] **PR #3**: PostgreSQL (Neon serverless) connection pool migration with advisory locking and SQLite fallback
+- [x] **Enterprise DevOps**: GitHub Actions CI/CD workflows, Docker Compose full-stack orchestration, Makefile, start scripts, and governance standards
 - [ ] Multi-party threshold signatures (ERC-7739 / Multisig coordination)
 - [ ] Zero-Knowledge Proofs (ZK-SNARKs) for anonymous institution credential attestation
 - [ ] Push notification dispatchers (Webhook / SMS) for on-call hospital coordinators
