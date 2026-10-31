@@ -94,11 +94,13 @@ class RecoveryAgent(BaseAgent):
         registry: Optional[AgentRegistry] = None,
         max_recovery_attempts: int = 3,
         backoff_base_seconds: float = 2.0,
+        advisor: Optional[Any] = None,
     ) -> None:
         super().__init__(name=name)
         self.registry = registry if registry is not None else default_registry
         self.max_recovery_attempts = max_recovery_attempts
         self.backoff_base_seconds = backoff_base_seconds
+        self.advisor = advisor
         self._workflow_attempt_counts: dict[UUID, int] = {}
         self._workflow_failure_logs: dict[UUID, list[dict[str, Any]]] = {}
 
@@ -146,28 +148,49 @@ class RecoveryAgent(BaseAgent):
         history.append(failure_entry)
         self._workflow_failure_logs[wf_id] = history
 
+        # Consult optional LLM recovery advisor for intelligent root-cause diagnosis
+        recovery_advice = None
+        if self.advisor is not None:
+            try:
+                if hasattr(self.advisor, "advise_async"):
+                    res = await self.advisor.advise_async(payload)
+                elif hasattr(self.advisor, "advise"):
+                    res = self.advisor.advise(payload)
+                else:
+                    res = None
+                if res:
+                    recovery_advice = res.model_dump() if hasattr(res, "model_dump") else res
+            except Exception as exc:
+                logger.warning("LLM recovery advisor evaluation failed: %s", exc)
+
         # 3. Check for Committed Reservation Invariant (Never silently cancel)
         commitment_status = str(payload.get("commitment_status", "")).upper()
         if commitment_status == "COMMITTED" or classification == FailureClassification.PROVIDER_NON_FULFILLMENT:
             # Committed reservation cannot be cancelled silently. Must initiate dispute or escalate.
-            return self._handle_committed_failure(wf_id, classification, failed_provider_id, history, payload)
+            result = self._handle_committed_failure(wf_id, classification, failed_provider_id, history, payload)
+            if recovery_advice and isinstance(result, dict):
+                result["recovery_advice"] = recovery_advice
+            return result
 
         # 4. Check Retry Budget
         if current_attempt > self.max_recovery_attempts:
             logger.warning("Workflow %s exceeded max recovery attempts (%d)", wf_id, self.max_recovery_attempts)
-            return self._escalate_to_human(
+            result = self._escalate_to_human(
                 wf_id=wf_id,
                 classification=classification,
                 history=history,
                 failed_provider_id=failed_provider_id,
                 reason=f"Exceeded maximum recovery attempts ({self.max_recovery_attempts}). Manual intervention required.",
             )
+            if recovery_advice and isinstance(result, dict):
+                result["recovery_advice"] = recovery_advice
+            return result
 
         # 5. Determine Recoverability & Strategy
         is_recoverable, strategy = self._determine_strategy(classification, payload)
 
         if not is_recoverable:
-            return {
+            result = {
                 "success": False,
                 "is_recoverable": False,
                 "selected_strategy": strategy.value,
@@ -181,6 +204,9 @@ class RecoveryAgent(BaseAgent):
                 "explanation": f"Failure classified as non-recoverable ({classification.value}): {payload.get('error')}",
                 "message": "Coordination failure cannot be automatically recovered. Aborted safely.",
             }
+            if recovery_advice and isinstance(result, dict):
+                result["recovery_advice"] = recovery_advice
+            return result
 
         # 6. Execute Remediation Strategy
         released_lock_id = None
@@ -192,7 +218,7 @@ class RecoveryAgent(BaseAgent):
             strategy = RecoveryStrategy.FIND_ALTERNATIVE_PROVIDER
 
         if strategy == RecoveryStrategy.FIND_ALTERNATIVE_PROVIDER:
-            return await self._find_alternative_provider(
+            result = await self._find_alternative_provider(
                 wf_id=wf_id,
                 classification=classification,
                 failed_provider_id=failed_provider_id,
@@ -201,10 +227,13 @@ class RecoveryAgent(BaseAgent):
                 payload=payload,
                 released_lock_id=released_lock_id,
             )
+            if recovery_advice and isinstance(result, dict):
+                result["recovery_advice"] = recovery_advice
+            return result
 
         elif strategy == RecoveryStrategy.RETRY_WITH_BACKOFF:
             backoff_delay = self.backoff_base_seconds * (2 ** (current_attempt - 1))
-            return {
+            result = {
                 "success": True,
                 "is_recoverable": True,
                 "selected_strategy": strategy.value,
@@ -219,15 +248,21 @@ class RecoveryAgent(BaseAgent):
                 "explanation": f"Transient failure ({classification.value}). Scheduled retry with {backoff_delay}s backoff.",
                 "message": f"Retrying transient failure with {backoff_delay}s exponential backoff.",
             }
+            if recovery_advice and isinstance(result, dict):
+                result["recovery_advice"] = recovery_advice
+            return result
 
         # Fallback escalation
-        return self._escalate_to_human(
+        result = self._escalate_to_human(
             wf_id=wf_id,
             classification=classification,
             history=history,
             failed_provider_id=failed_provider_id,
             reason="No automated recovery strategy could be applied.",
         )
+        if recovery_advice and isinstance(result, dict):
+            result["recovery_advice"] = recovery_advice
+        return result
 
     def _classify_failure(self, payload: dict[str, Any]) -> FailureClassification:
         """Classify the root cause of an error based on structured reason codes or error text."""
@@ -245,7 +280,7 @@ class RecoveryAgent(BaseAgent):
             return FailureClassification.RPC_FAILURE
         if "expired" in err_str and "lock" in err_str:
             return FailureClassification.EXPIRED_LOCK
-        if "insufficient" in err_str and "capacity" in err_str:
+        if "insufficient" in err_str or "capacity" in err_str or "no available slot" in err_str:
             return FailureClassification.INSUFFICIENT_CAPACITY
         if "privacy" in err_str or "security" in err_str or "forbidden" in err_str or "unauthorized" in err_str:
             return FailureClassification.SECURITY_OR_POLICY_VIOLATION

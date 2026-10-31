@@ -104,8 +104,12 @@ class RecoveryAdviceOutput(BaseModel):
     """Structured guidance for workflow failures and alternative discovery."""
     model_config = ConfigDict(extra="forbid")
 
+    failure_classification: str = Field(..., description="Classified root cause")
     root_cause_explanation: str = Field(..., description="Clear explanation of why the coordination step failed")
     suggested_recovery_path: str = Field(..., description="Recommended remediation strategy")
-    alternative_provider_ids: list[str] = Field(default_factory=list, description="Candidate providers to evaluate")
     is_recoverable: bool = Field(default=True, description="Whether automatic recovery should be attempted")
+    requires_human_intervention: bool = Field(default=False, description="Whether human review or approval is necessary")
+    alternative_provider_ids: list[str] = Field(default_factory=list, description="Candidate providers to evaluate")
+    suggested_counteroffer_quantity: Optional[int] = Field(default=None, description="Suggested renegotiation quantity if partial capacity is viable")
+    remediation_steps: list[str] = Field(default_factory=list, description="Explicit sequential steps to remediate the failure")
 
