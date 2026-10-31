@@ -8,6 +8,7 @@ from .guardrails import (
 )
 from .negotiation_advisor import LLMNegotiationAdvisor
 from .recovery_advisor import LLMRecoveryAdvisor
+from .llm_orchestrator import LLMOrchestrator, LLMOrchestrationResult
 from .provider import (
     GeminiLLMProvider,
     LLMProvider,
@@ -49,6 +50,8 @@ __all__ = [
     "LLMRequestParser",
     "LLMNegotiationAdvisor",
     "LLMRecoveryAdvisor",
+    "LLMOrchestrator",
+    "LLMOrchestrationResult",
     "validate_input",
     "validate_output",
     "sanitize_log_message",

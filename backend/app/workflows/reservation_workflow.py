@@ -52,6 +52,7 @@ class ReservationWorkflowResult(BaseModel):
     provider_offers: list[ProviderOffer] = Field(default_factory=list)
     selected_offer: Optional[ProviderOffer] = None
     selected_proposal: Optional[NegotiationProposal] = None
+    negotiation_advice: Optional[dict[str, Any]] = None
     verification: Optional[VerificationResult] = None
     approved_by: Optional[str] = None
     approved_at: Optional[datetime] = None
@@ -375,6 +376,8 @@ class ReservationWorkflowCoordinator:
             selected_offer = ProviderOffer.model_validate(neg_res.data["selected_offer"])
             result.selected_proposal = proposal
             result.selected_offer = selected_offer
+            if neg_res.data.get("negotiation_advice"):
+                result.negotiation_advice = neg_res.data.get("negotiation_advice")
 
             # 4. Independent Verification
             self._record_step(result, "VERIFYING", "VerificationAgent", f"Verifying provider '{selected_offer.provider_id}'")
@@ -608,13 +611,16 @@ class ReservationWorkflowCoordinator:
             },
         )
         rec_res = await rec_agent.execute(msg)
-        result.recovery_attempts.append({
+        attempt_record: dict[str, Any] = {
             "attempt": attempt,
             "classification": classification.value,
             "error": error,
             "strategy": rec_res.data.get("selected_strategy"),
             "timestamp": datetime.now(timezone.utc).isoformat(),
-        })
+        }
+        if rec_res.data.get("recovery_advice"):
+            attempt_record["recovery_advice"] = rec_res.data.get("recovery_advice")
+        result.recovery_attempts.append(attempt_record)
         return rec_res.data
 
     def _record_step(
