@@ -33,3 +33,4 @@ Please check the tests that pass with these changes:
 - [ ] **AI Safety Boundary**: LLM is strictly advisory; no direct blockchain signing or contract execution permissions.
 - [ ] **No Secret Leaks**: No private keys, mnemonic seeds, or sensitive API keys committed.
 - [ ] **State Machine Integrity**: Finite state machine transitions and audit hash-chain integrity preserved.
+

@@ -38,3 +38,4 @@ cleanup() {
 trap cleanup INT TERM
 
 wait
+

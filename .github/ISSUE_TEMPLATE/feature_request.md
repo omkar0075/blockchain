@@ -27,3 +27,4 @@ Explain how this feature benefits healthcare institutions, hospital coordinators
 
 ## 📋 Additional Context
 Add any wireframes, diagrams, or clinical workflow references.
+

@@ -39,3 +39,4 @@ Paste logs or terminal output here
 - Node.js Version: [e.g. 20.12.0]
 - Database: [PostgreSQL / SQLite]
 - MST Coral RPC Connectivity: [Connected / Unreachable]
+

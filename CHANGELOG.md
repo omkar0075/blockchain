@@ -78,3 +78,4 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
   - Genesis-to-tip SHA-256 tamper-evident hash-chained audit trail.
   - Independent direct on-chain verifier CLI tool (`tools/verify-onchain.js`).
   - React 18 / Vite coordinator dashboard.
+

@@ -50,3 +50,4 @@ Instead, please send a responsible disclosure report via email:
 * **Initial Acknowledgement**: Within 24 hours.
 * **Triage & Assessment**: Within 48 hours.
 * **Remediation & Patch**: Promptly coordinated before public disclosure.
+

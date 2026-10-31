@@ -38,3 +38,4 @@ jobs:
         run: |
           pip install pip-audit
           pip-audit -r backend/requirements.txt || true
+

@@ -106,3 +106,4 @@ When contributing code, you must respect the following architectural invariants:
 2. Ensure all tests pass cleanly.
 3. Push your branch to GitHub and open a Pull Request using our [PR Template](.github/PULL_REQUEST_TEMPLATE.md).
 4. Maintainers will review your PR and provide feedback.
+

@@ -16,3 +16,4 @@ contracts/cache
 backend/data/*.db
 .env
 *.pem
+

@@ -38,3 +38,4 @@ Community leaders will follow these Community Impact Guidelines in determining t
 2. **Warning**: A warning with consequences for continued behavior.
 3. **Temporary Ban**: A temporary ban from any sort of interaction or public communication.
 4. **Permanent Ban**: A permanent ban from any sort of public interaction within the community.
+

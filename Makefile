@@ -58,3 +58,4 @@ clean:
 	rm -rf contracts/cache contracts/artifacts contracts/typechain-types
 	rm -rf backend/.pytest_cache backend/__pycache__ backend/app/__pycache__
 	rm -rf frontend/dist
+
