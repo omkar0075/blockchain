@@ -332,3 +332,4 @@ def test_rejects_patient_sensitive_information():
             )
 
     asyncio.run(run())
+

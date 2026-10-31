@@ -6,6 +6,7 @@ from .guardrails import (
     validate_input,
     validate_output,
 )
+from .negotiation_advisor import LLMNegotiationAdvisor
 from .provider import (
     GeminiLLMProvider,
     LLMProvider,
@@ -20,6 +21,7 @@ from .schemas import (
     LLMResponse,
     LLMTimeoutError,
     NegotiationAdviceOutput,
+    OfferEvaluation,
     RecoveryAdviceOutput,
     RequestInterpretationOutput,
     StructuredReasoning,
@@ -40,9 +42,11 @@ __all__ = [
     "LLMResponse",
     "StructuredReasoning",
     "RequestInterpretationOutput",
+    "OfferEvaluation",
     "NegotiationAdviceOutput",
     "RecoveryAdviceOutput",
     "LLMRequestParser",
+    "LLMNegotiationAdvisor",
     "validate_input",
     "validate_output",
     "sanitize_log_message",

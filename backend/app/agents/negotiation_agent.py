@@ -35,11 +35,13 @@ class NegotiationAgent(BaseAgent):
         default_max_budget: Optional[float] = None,
         allow_partial_quantity: bool = True,
         min_partial_ratio: float = 0.5,
+        advisor: Optional[Any] = None,
     ) -> None:
         super().__init__(name=name)
         self.default_max_budget = default_max_budget
         self.allow_partial_quantity = allow_partial_quantity
         self.min_partial_ratio = min_partial_ratio
+        self.advisor = advisor
 
     async def process(self, message: AgentMessage) -> dict[str, Any]:
         """
@@ -76,6 +78,18 @@ class NegotiationAgent(BaseAgent):
         eligible_partial: list[tuple[ProviderOffer, dict[str, Any]]] = []
 
         preferred_set = set(request.constraints.preferred_providers) if request.constraints else set()
+
+        # Optional LLM Advisory Reasoning
+        advice_payload: Optional[dict[str, Any]] = None
+        if self.advisor is not None and offers:
+            try:
+                if hasattr(self.advisor, "advise_async"):
+                    adv = await self.advisor.advise_async(request, offers, max_budget=max_budget, history=history)
+                else:
+                    adv = self.advisor.advise(request, offers, max_budget=max_budget, history=history)
+                advice_payload = adv.model_dump()
+            except Exception as e:
+                logger.warning("Negotiation advisor execution error: %s", e)
 
         # 1. Compare and Filter Candidate Offers
         for offer in offers:
@@ -159,6 +173,7 @@ class NegotiationAgent(BaseAgent):
                 "is_counteroffer": False,
                 "rejections": rejections,
                 "negotiation_history": [h.model_dump() for h in history],
+                "negotiation_advice": advice_payload,
                 "message": "No provider offers met the requested constraints and policy limits.",
             }
 
@@ -240,6 +255,7 @@ class NegotiationAgent(BaseAgent):
             "is_counteroffer": is_counteroffer,
             "rejections": rejections,
             "negotiation_history": [h.model_dump() for h in updated_history],
+            "negotiation_advice": advice_payload,
             "message": (
                 f"Generated {'counteroffer' if is_counteroffer else 'negotiation proposal'} "
                 f"for provider {selected_offer.provider_id}. Authorization required."
